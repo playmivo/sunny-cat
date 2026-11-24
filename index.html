@@ -323,6 +323,9 @@ function tailSpine(geometry, pose = {}) {
   const { rootX, rootY, tailLength } = geometry;
   const open = clamp(pose.tailOpen ?? 0);
   const bend = pose.tailBend ?? 0;
+  const grip = pose.tailProgress ?? 0;
+  const flex = pose.tailFlex ?? 0;
+  const pressure = clamp(pose.tailPressure ?? 0);
   const length = tailLength / TAIL_SEGMENTS;
   const spine = [{ x: rootX, y: rootY }];
 
@@ -334,7 +337,9 @@ function tailSpine(geometry, pose = {}) {
     const fromRoot = clamp((progress - 0.04) / 0.59);
     const lifted = bend * fromRoot * (2 - fromRoot);
     const softTip = 0.27 * clamp((progress - 0.63) / 0.37) ** 2;
-    const angle = mix(curl, lifted + softTip, open);
+    const local = (progress - grip) / 0.16;
+    const flexWeight = Math.exp(-local * local) * clamp(progress * 8);
+    const angle = mix(curl, lifted + softTip, open) + flex * flexWeight;
     const previous = spine[index];
     spine.push({ x: previous.x + Math.cos(angle) * length, y: previous.y + Math.sin(angle) * length });
   }
@@ -347,6 +352,8 @@ function tailSpine(geometry, pose = {}) {
     const distance = Math.max(0.0001, Math.hypot(dx, dy));
     spine[index].nx = -dy / distance;
     spine[index].ny = dx / distance;
+    const contact = (index / TAIL_SEGMENTS - grip) / 0.09;
+    spine[index].widthScale = 1 - pressure * 0.11 * Math.exp(-contact * contact) * clamp(index / 3);
   }
   return spine;
 }
@@ -357,7 +364,8 @@ function tailRadius(geometry, progress) {
 }
 
 function normalOffset(point, distance) {
-  return { x: point.x + point.nx * distance, y: point.y + point.ny * distance };
+  const offset = distance * point.widthScale;
+  return { x: point.x + point.nx * offset, y: point.y + point.ny * offset };
 }
 
 function shadeTail(image, geometry) {
@@ -763,8 +771,7 @@ return { Purr };
 
 const WIDTH = 1200;
 const HEIGHT = 750;
-const TAIL_GRIP_START = 0.16;
-const TAIL_GRIP_END = 0.75;
+const TAIL_RELEASE_PAUSE = 185;
 const viewer = document.querySelector("#viewer");
 const scene = document.querySelector("#scene");
 const canvas = document.querySelector("#stage");
@@ -787,13 +794,17 @@ let gesture = null;
 let previousTime = 0;
 let animation = 0;
 let intensity = 0;
+let tailSettlesAt = 0;
+let passedTail = null;
 
 const pose = {
   head: 0,
   back: 0,
   tailOpen: 0,
   tailBend: 0,
-  tailProgress: TAIL_GRIP_START,
+  tailProgress: 0,
+  tailFlex: 0,
+  tailPressure: 0,
   contactX: geometry.backX,
   contactY: geometry.backY,
   strokeX: 0,
@@ -871,6 +882,8 @@ mountOptions(document.querySelector("#cats"), cats, cat, (item) => {
   geometry = catGeometry(cat, art);
   pose.tailOpen = 0;
   pose.tailBend = 0;
+  pose.tailFlex = 0;
+  pose.tailPressure = 0;
   spine = tailSpine(geometry, pose);
   saveSelection("cat", cat);
 });
@@ -915,7 +928,10 @@ function drawBackground() {
   }
 }
 
-function drawHandSprite(config, opacity) {
+let handBlendCanvas;
+let handBlendContext;
+
+function drawHandSprite(ink, config, opacity = 1) {
   const image = imageFor(config.image);
   if (!ready(image) || opacity < 0.01) return;
 
@@ -928,75 +944,166 @@ function drawHandSprite(config, opacity) {
   const sleeveStart = Math.round(image.naturalHeight * 0.77);
   const sleeveY = y + height * sleeveStart / image.naturalHeight;
 
-  context.save();
-  context.translate(hand.x, hand.y);
-  context.rotate(hand.tilt);
-  context.globalAlpha = opacity;
+  ink.save();
+  ink.translate(hand.x, hand.y);
+  ink.rotate(hand.tilt);
+  ink.globalAlpha = opacity;
 
   if (extra > 0) {
-    context.drawImage(image, 0, sleeveStart, image.naturalWidth, image.naturalHeight - sleeveStart,
+    ink.drawImage(image, 0, sleeveStart, image.naturalWidth, image.naturalHeight - sleeveStart,
       x, sleeveY - 0.5, width, y + height - sleeveY + extra + 0.5);
-    context.drawImage(image, 0, 0, image.naturalWidth, sleeveStart,
+    ink.drawImage(image, 0, 0, image.naturalWidth, sleeveStart,
       x, y, width, sleeveY - y);
   } else {
-    context.drawImage(image, x, y, width, height);
+    ink.drawImage(image, x, y, width, height);
   }
-  context.restore();
+  ink.restore();
 }
 
 function drawHand() {
   if (!ready(art.body) || !ready(imageFor(hands.open.image))) return;
+  const grip = ready(imageFor(hands.curled.image)) ? hand.grip : 0;
+  const radius = 64 - grip * 19;
+  const shadowX = 23 - grip * 12;
+  const shadowY = 35 - grip * 17;
   context.save();
   context.translate(hand.x, hand.y);
-  context.scale(1, 0.68);
-  const shadow = context.createRadialGradient(23, 35, 7, 23, 35, 64);
+  context.scale(1, 0.68 - grip * 0.12);
+  const shadow = context.createRadialGradient(shadowX, shadowY, 7, shadowX, shadowY, radius);
   shadow.addColorStop(0, "rgba(50, 30, 19, 0.32)");
   shadow.addColorStop(1, "rgba(50, 30, 19, 0)");
   context.fillStyle = shadow;
-  context.fillRect(-41, -29, 128, 128);
+  context.fillRect(shadowX - radius, shadowY - radius, radius * 2, radius * 2);
   context.restore();
 
-  drawHandSprite(hands.open, 1 - hand.grip);
-  drawHandSprite(hands.curled, hand.grip);
+  if (grip < 0.015 || grip > 0.985) {
+    drawHandSprite(context, grip < 0.015 ? hands.open : hands.curled);
+    return;
+  }
+
+  if (!handBlendCanvas) {
+    handBlendCanvas = document.createElement("canvas");
+    handBlendContext = handBlendCanvas.getContext("2d");
+  }
+  if (handBlendCanvas.width !== canvas.width) handBlendCanvas.width = canvas.width;
+  if (handBlendCanvas.height !== canvas.height) handBlendCanvas.height = canvas.height;
+
+  const ink = handBlendContext;
+  ink.resetTransform();
+  ink.clearRect(0, 0, handBlendCanvas.width, handBlendCanvas.height);
+  const scale = view.pixelRatio * view.scale;
+  ink.setTransform(scale, 0, 0, scale, view.pixelRatio * view.x, view.pixelRatio * view.y);
+  ink.globalCompositeOperation = "source-over";
+  drawHandSprite(ink, hands.open, 1 - grip);
+  // Blend both textures on their own layer so the overlapping hand stays opaque.
+  ink.globalCompositeOperation = "lighter";
+  drawHandSprite(ink, hands.curled, grip);
+
+  context.save();
+  context.resetTransform();
+  context.drawImage(handBlendCanvas, 0, 0);
+  context.restore();
 }
 
 function approach(current, goal, rate, seconds) {
   return goal + (current - goal) * Math.exp(-rate * seconds);
 }
 
-function gripProgress(progress) {
-  return Math.max(TAIL_GRIP_START, Math.min(TAIL_GRIP_END, progress));
+function beginTailStroke(x, y, now, pressed) {
+  const { progress } = tailSurfacePoint(x, y, spine);
+  const point = tailPointAt(spine, progress);
+  pose.tailProgress = progress;
+  return {
+    zone: "tail", x, y, dx: 0, dy: 0, movedAt: pressed ? now : -Infinity,
+    startX: x, startY: y, offsetX: x - point.x, offsetY: y - point.y,
+    startProgress: progress, progress, furthestX: x,
+    startOpen: pose.tailOpen, startBend: pose.tailBend,
+    open: pose.tailOpen, bend: pose.tailBend, flex: 0, slip: false,
+  };
 }
 
-function tailMotion(action) {
-  if (action.tailProgress !== undefined) return action;
-  const dx = action.x - geometry.rootX;
-  const dy = action.y - geometry.rootY;
-  const travel = Math.max(0, Math.min(1, (dx / geometry.tailLength - 0.36) / 0.45));
-  return {
-    tailOpen: travel * travel * (3 - 2 * travel),
-    tailBend: Math.max(-0.90, Math.min(0.82, Math.atan2(dy, Math.max(geometry.tailWidth, dx)))),
-  };
+function beyondTailTip(x, y, points) {
+  const tip = tailPointAt(points, 1);
+  const dx = x - tip.x;
+  const dy = y - tip.y;
+  const along = dx * Math.cos(tip.angle) + dy * Math.sin(tip.angle);
+  const across = dy * Math.cos(tip.angle) - dx * Math.sin(tip.angle);
+  return along > 8 && Math.abs(across) < geometry.tailWidth * 0.45;
+}
+
+function advanceTailStroke(stroke, x, y, now) {
+  const dx = x - stroke.x;
+  const dy = y - stroke.y;
+  const step = Math.hypot(dx, dy);
+  if (step < 0.25) return true;
+
+  const length = geometry.tailLength;
+  const travel = Math.hypot(x - stroke.startX, y - stroke.startY);
+  const offset = Math.max(0, 1 - travel / (length * 0.12));
+  const fingerX = x - stroke.offsetX * offset;
+  const fingerY = y - stroke.offsetY * offset;
+  const { angle } = tailPointAt(spine, stroke.progress);
+
+  // Opening records the outward part of this stroke. Returning along the same
+  // fur only moves the grip; it does not coil the tail back underneath the user.
+  if (x > stroke.furthestX) {
+    stroke.furthestX = x;
+    const pull = Math.max(0, x - stroke.startX - length * 0.014);
+    const span = length * (0.17 + (1 - stroke.startProgress) * 0.19);
+    const progress = Math.min(1, pull / span);
+    const opening = progress * progress * (3 - 2 * progress);
+    stroke.open = stroke.startOpen + (1 - stroke.startOpen) * opening;
+    const yaw = Math.atan2(y - stroke.startY, Math.max(length * 0.17, pull));
+    const bend = Math.max(-0.56, Math.min(0.54, yaw));
+    stroke.bend = stroke.startBend + (bend - stroke.startBend) * opening;
+  }
+
+  const width = geometry.tailWidth;
+  const search = Math.min(0.44, 0.11 + step / length * 2);
+  const start = Math.max(0, stroke.progress - search);
+  const end = Math.min(1, stroke.progress + search);
+  const drawn = tailSurfacePoint(fingerX, fingerY, spine, start, end);
+  const goalSpine = tailSpine(geometry, { tailOpen: stroke.open, tailBend: stroke.bend });
+  const ahead = tailSurfacePoint(fingerX, fingerY, goalSpine, start, end);
+  const onDrawnTail = drawn.distance <= width * 0.47;
+  const contact = onDrawnTail ? drawn : ahead;
+  const nearTip = Math.max(stroke.progress, drawn.progress, ahead.progress) > 0.94;
+  stroke.slip = nearTip && beyondTailTip(fingerX, fingerY, goalSpine);
+  if (!stroke.slip && contact.distance > width * 0.57) return false;
+
+  const across = dy * Math.cos(angle) - dx * Math.sin(angle);
+  stroke.flex = Math.max(-0.14, Math.min(0.14, across / 42));
+  stroke.progress = stroke.slip ? 1 : contact.progress;
+  stroke.x = x;
+  stroke.y = y;
+  stroke.dx = dx;
+  stroke.dy = dy;
+  stroke.movedAt = now;
+  return true;
+}
+
+function releaseTail(now) {
+  tailSettlesAt = now + (reducedMotion.matches ? 60 : TAIL_RELEASE_PAUSE);
 }
 
 function keyboardContact(now) {
   if (!keyboard) return null;
   const progress = (now - keyboard.start) / keyboard.duration;
   if (progress >= 1) {
+    if (keyboard.zone === "tail") releaseTail(now);
     keyboard = null;
     return null;
   }
   const curve = Math.sin(progress * Math.PI);
   if (keyboard.zone === "tail") {
-    return {
-      zone: "tail",
-      tailProgress: TAIL_GRIP_START + (TAIL_GRIP_END - TAIL_GRIP_START) * progress,
-      tailOpen: Math.sin(progress * Math.PI / 2),
-      tailBend: -0.42,
-      movedAt: now,
-      dx: 3,
-      dy: 0,
-    };
+    const stroke = keyboard.stroke;
+    const sweep = progress * progress * (3 - 2 * progress);
+    const x = stroke.startX + (geometry.rootX + geometry.tailLength * 1.06 - stroke.startX) * sweep;
+    const y = stroke.startY - geometry.tailLength * 0.25 * sweep;
+    if (advanceTailStroke(stroke, x, y, now)) return stroke;
+    releaseTail(now);
+    keyboard = null;
+    return null;
   }
   const shoulder = geometry.headX + (geometry.backX - geometry.headX) * 0.36;
   return {
@@ -1016,33 +1123,46 @@ function render(now) {
   geometry = catGeometry(cat, art);
 
   const motionScale = reducedMotion.matches ? 0.52 : 1;
-  const action = keyboardContact(now) ?? gesture;
-  const moving = action && now - action.movedAt < 200;
-  const tailHeld = action?.zone === "tail";
-  const contactRate = action ? 43 : 6;
-
-  const tailMotionGoal = tailHeld ? tailMotion(action) : null;
-  pose.tailOpen = approach(pose.tailOpen, tailMotionGoal?.tailOpen ?? 0, tailHeld ? 15 : 7, seconds);
-  pose.tailBend = approach(pose.tailBend, tailMotionGoal?.tailBend ?? 0, 12, seconds);
+  let action = keyboardContact(now) ?? gesture;
+  let tailHeld = action?.zone === "tail";
+  if (tailHeld) {
+    pose.tailProgress = approach(pose.tailProgress, action.progress, 30, seconds);
+    pose.tailOpen = approach(pose.tailOpen, action.open, 19, seconds);
+    pose.tailBend = approach(pose.tailBend, action.bend, 14, seconds);
+  } else if (now >= tailSettlesAt) {
+    pose.tailOpen = approach(pose.tailOpen, 0, 4.6, seconds);
+    pose.tailBend = approach(pose.tailBend, 0, 5.2, seconds);
+  }
+  const activeFlex = tailHeld && now - action.movedAt < 120 ? action.flex : 0;
+  pose.tailFlex = approach(pose.tailFlex, activeFlex * motionScale, 12, seconds);
+  pose.tailPressure = approach(pose.tailPressure, tailHeld ? motionScale : 0, 17, seconds);
   spine = tailSpine(geometry, pose);
 
   let handTilt = 0;
   if (tailHeld) {
-    // Look around the prior contact so a crossing near the curl will not jump
-    // the hand to a different section of the tail.
-    const progress = action.tailProgress ?? tailSurfacePoint(
-      action.x, action.y, spine, gripProgress(pose.tailProgress - 0.23), gripProgress(pose.tailProgress + 0.23),
-    ).progress;
-    pose.tailProgress = approach(pose.tailProgress, progress, 28, seconds);
     const contact = tailPointAt(spine, pose.tailProgress);
     pose.contactX = contact.x;
     pose.contactY = contact.y;
     handTilt = Math.sin(contact.angle) * 0.16;
+
+    // The artwork can still be catching up with a quick swipe. Let the grip
+    // reach the drawn tip before releasing, even if the pointer stops moving.
+    if (action.slip && pose.tailProgress > 0.978 && beyondTailTip(action.x, action.y, spine)) {
+      releaseTail(now);
+      passedTail = keyboard ? null : { x: action.x, y: action.y };
+      gesture = null;
+      keyboard = null;
+      action = null;
+      tailHeld = false;
+      target.classList.remove("is-following");
+    }
   } else {
+    const contactRate = action ? 43 : 6;
     pose.contactX = approach(pose.contactX, action?.x ?? geometry.backX, contactRate, seconds);
     pose.contactY = approach(pose.contactY, action?.y ?? geometry.backY, contactRate, seconds);
   }
 
+  const moving = action && now - action.movedAt < 200;
   const motionLength = moving ? Math.max(1, Math.hypot(action.dx, action.dy)) : 1;
   pose.strokeX = approach(pose.strokeX, moving ? action.dx / motionLength : 0, 20, seconds);
   pose.strokeY = approach(pose.strokeY, moving ? action.dy / motionLength : 0, 20, seconds);
@@ -1084,11 +1204,28 @@ function scenePoint(event) {
 function updatePointer(event, pressed = false) {
   const { x, y } = scenePoint(event);
   let zone = ready(art.body) ? hitCat(x, y, pose, cat, art, spine) : null;
+  const now = performance.now();
 
-  if (!zone && gesture?.zone === "tail" && x > geometry.rootX) {
-    const distance = tailSurfacePoint(x, y, spine).distance;
-    const threshold = geometry.tailLength * (pointerId === null ? 0.29 : 0.56);
-    if (distance <= threshold) zone = "tail";
+  if (keyboard?.zone === "tail") releaseTail(now);
+  keyboard = null;
+  if (gesture?.zone === "tail") {
+    const returningToBack = zone === "back" && x <= geometry.rootX + geometry.tailWidth * 0.14;
+    if (!returningToBack && advanceTailStroke(gesture, x, y, now)) {
+      target.classList.toggle("is-following", ready(imageFor(hands.open.image)));
+      return;
+    }
+    releaseTail(now);
+    gesture = null;
+  }
+
+  if (passedTail) {
+    const tip = tailPointAt(spine, 1);
+    const distance = Math.hypot(x - tip.x, y - tip.y);
+    const previousDistance = Math.hypot(passedTail.x - tip.x, passedTail.y - tip.y);
+    const continuing = distance + 0.5 >= previousDistance;
+    const nearTip = zone === "tail" && tailSurfacePoint(x, y, spine).progress > 0.9;
+    if (continuing && nearTip) zone = null;
+    else if (zone || distance > geometry.tailWidth * 0.55) passedTail = null;
   }
   if (!zone) {
     gesture = null;
@@ -1096,14 +1233,15 @@ function updatePointer(event, pressed = false) {
     return;
   }
 
-  keyboard = null;
-  const now = performance.now();
+  if (zone === "tail") {
+    gesture = beginTailStroke(x, y, now, pressed);
+    target.classList.toggle("is-following", ready(imageFor(hands.open.image)));
+    return;
+  }
+
   const dx = gesture ? x - gesture.x : 0;
   const dy = gesture ? y - gesture.y : 0;
   const moved = pressed || (gesture && Math.hypot(dx, dy) > 0.25);
-  if (zone === "tail" && gesture?.zone !== "tail") {
-    pose.tailProgress = gripProgress(tailSurfacePoint(x, y, spine).progress);
-  }
 
   gesture = {
     zone, x, y, dx, dy,
@@ -1120,6 +1258,8 @@ function stopPetting() {
     target.releasePointerCapture(captured);
   }
 
+  if (gesture?.zone === "tail" || keyboard?.zone === "tail") releaseTail(performance.now());
+  passedTail = null;
   keyboard = null;
   gesture = null;
   intensity = 0;
@@ -1168,9 +1308,16 @@ target.addEventListener("pointerleave", (event) => {
 function keyboardPet(zone) {
   if (pointerId !== null) return;
   void purr.unlock();
+  if (gesture?.zone === "tail" || keyboard?.zone === "tail") releaseTail(performance.now());
   gesture = null;
+  passedTail = null;
   target.classList.remove("is-following");
-  keyboard = { zone, start: performance.now(), duration: zone === "tail" ? 840 : 620 };
+  const now = performance.now();
+  keyboard = { zone, start: now, duration: zone === "tail" ? 1240 : 620 };
+  if (zone === "tail") {
+    const start = tailPointAt(spine, 0.23);
+    keyboard.stroke = beginTailStroke(start.x, start.y, now, true);
+  }
 }
 
 target.addEventListener("click", (event) => {
