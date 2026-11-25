@@ -318,13 +318,14 @@ function drawCat(ctx, pose = {}, cat = {}, art = {}, spine, geometry = catGeomet
   const hasTail = ready(art.tail);
   const artwork = hasTail ? blendTailRoot(art.body, geometry) : art.body;
   const body = fitBodyShape(artwork, geometry);
-  drawBodyShadow(ctx, geometry.torsoChange ? body : art.body, geometry);
+  const motion = bodyMotion(geometry, pose);
+  drawBodyShadow(ctx, geometry.torsoChange ? body : art.body, geometry, motion);
   if (hasTail) {
     const tail = spine ?? tailSpine(geometry, pose);
     drawTailShadow(ctx, geometry, tail);
     drawTail(ctx, shadeTail(art.tail, geometry), geometry, tail);
   }
-  drawBody(ctx, body, geometry, pose);
+  drawBody(ctx, body, geometry, motion);
 }
 
 function hitCat(x, y, pose = {}, cat = {}, art = {}, spine, geometry = catGeometry(cat, art)) {
@@ -583,30 +584,77 @@ function shadowFor(image) {
   return shadow;
 }
 
-function drawBodyShadow(ctx, image, g) {
+function drawBodyShadow(ctx, image, g, motion) {
   const shadow = shadowFor(image);
   if (!shadow) return;
   const marginX = shadow.padding * g.bodyWidth / shadow.width;
   const marginY = shadow.padding * g.bodyHeight / shadow.height;
+  let shiftX = 0;
+  let shiftY = 0;
+  let heightChange = 0;
+  if (motion) {
+    // Sample the same compression field and gently reshape the cached shadow.
+    const x = clamp(motion.x, g.bodyX, g.bodyX + g.bodyWidth);
+    const upperY = g.bodyY + g.bodyHeight * 0.12;
+    const lowerY = g.bodyY + g.bodyHeight * 0.88;
+    const upper = deformBodyPoint(x, upperY, g, motion);
+    const lower = deformBodyPoint(x, lowerY, g, motion);
+    shiftX = (upper.x + lower.x - 2 * x) * 0.23;
+    shiftY = (upper.y + lower.y - upperY - lowerY) * 0.18;
+    heightChange = (lower.y - upper.y - lowerY + upperY) * 0.22;
+  }
   ctx.drawImage(
-    shadow.sample, g.bodyX + 3 - marginX, g.bodyY + 12 - marginY,
-    g.bodyWidth + marginX * 2, g.bodyHeight + marginY * 2,
+    shadow.sample, g.bodyX + 3 - marginX + shiftX, g.bodyY + 12 - marginY + shiftY - heightChange / 2,
+    g.bodyWidth + marginX * 2, g.bodyHeight + marginY * 2 + heightChange,
   );
 }
 
-function drawBody(ctx, image, g, pose) {
+function bodyMotion(g, pose) {
   const head = clamp(pose.head ?? 0);
   const back = clamp(pose.back ?? 0);
   const pressure = Math.max(head, back);
-  const contactX = pose.contactX ?? g.backX;
-  const contactY = pose.contactY ?? g.backY;
-  if (pressure < 0.012) {
+  if (pressure < 0.012) return null;
+  const torso = back / (head + back);
+  return {
+    pressure,
+    x: pose.bodyContactX ?? pose.contactX ?? g.backX,
+    y: pose.bodyContactY ?? pose.contactY ?? g.backY,
+    radiusX: g.bodyWidth * mix(0.19, 0.34, torso),
+    radiusY: g.bodyHeight * mix(0.38, 0.81, torso),
+    directionX: clamp(pose.strokeX ?? 0, -1, 1),
+    directionY: clamp(pose.strokeY ?? 0, -1, 1),
+  };
+}
+
+function deformBodyPoint(x, y, g, motion) {
+  const dx = (x - motion.x) / motion.radiusX;
+  const dy = (y - motion.y) / motion.radiusY;
+  const support = clamp(1 - dx * dx - dy * dy);
+  if (!support) return { x, y };
+
+  const socket = clamp((Math.hypot(x - g.rootX, y - g.rootY) - 56) / 103);
+  const anchored = socket * socket * (3 - 2 * socket);
+  const shoulder = clamp((x - g.headEndX + 37) / 91);
+  const stiffness = mix(0.53, 1, shoulder * shoulder * (3 - 2 * shoulder));
+  const amount = motion.pressure * anchored * stiffness;
+
+  // Neighbouring fur follows the stroke while the closer patch compresses.
+  const follow = support * Math.sqrt(support);
+  const indentation = support ** 3;
+  return {
+    x: x + amount * (motion.directionX * (18 * follow + 9 * indentation) + dx * 12 * follow),
+    y: y + amount * (motion.directionY * (16 * follow + 6 * indentation)
+      - dy * (43 * follow + 7 * indentation) + 11 * indentation),
+  };
+}
+
+function drawBody(ctx, image, g, motion) {
+  if (!motion) {
     ctx.drawImage(image, g.bodyX, g.bodyY, g.bodyWidth, g.bodyHeight);
     return;
   }
 
-  const radiusX = head > back ? 103 : 133;
-  const radiusY = head > back ? 83 : 107;
+  const { radiusX, radiusY, x: contactX, y: contactY } = motion;
   const cellWidth = g.bodyWidth / BODY_COLUMNS;
   const cellHeight = g.bodyHeight / BODY_ROWS;
   const xs = Array.from({ length: BODY_COLUMNS + 1 }, (_, index) => index * cellWidth);
@@ -633,24 +681,13 @@ function drawBody(ctx, image, g, pose) {
   drawUnchanged(xs[columnStart], 0, xs[columnEnd], ys[rowStart]);
   drawUnchanged(xs[columnStart], ys[rowEnd], xs[columnEnd], g.bodyHeight);
 
-  const directionX = clamp(pose.strokeX ?? 0.5, -1, 1);
-  const directionY = clamp(pose.strokeY ?? 0.22, -1, 1);
   const vertices = [];
   for (let row = rowStart; row <= rowEnd; row += 1) {
     const points = [];
     for (let column = columnStart; column <= columnEnd; column += 1) {
       const x = g.bodyX + xs[column];
       const y = g.bodyY + ys[row];
-      const dx = (x - contactX) / radiusX;
-      const dy = (y - contactY) / radiusY;
-      const falloff = clamp(1 - dx * dx - dy * dy) ** 2;
-      const anchored = clamp(Math.hypot(x - g.rootX, y - g.rootY) / 91);
-      const amount = pressure * falloff * anchored;
-
-      points.push({
-        x: x + amount * (directionX * 12 - dx * 9),
-        y: y + amount * (directionY * 10 - dy * 18 + 3),
-      });
+      points.push(deformBodyPoint(x, y, g, motion));
     }
     vertices.push(points);
   }
@@ -937,7 +974,7 @@ const WIDTH = 1200;
 const HEIGHT = 750;
 const TAIL_RELEASE_PAUSE = 185;
 const TOUCH_ENTRY_MS = 125;
-const TOUCH_TRAVEL_SPEED = 1650;
+const TOUCH_TRANSITION_SPEED = 2100;
 const viewer = document.querySelector("#viewer");
 const scene = document.querySelector("#scene");
 const canvas = document.querySelector("#stage");
@@ -960,6 +997,7 @@ let keyboard = null;
 let pointerId = null;
 let touchStartedAt = null;
 let touchTailJoined = false;
+let directBodyFollow = false;
 let gesture = null;
 let previousTime = 0;
 let animation = 0;
@@ -978,6 +1016,8 @@ const pose = {
   tailPressure: 0,
   contactX: geometry.backX,
   contactY: geometry.backY,
+  bodyContactX: geometry.backX,
+  bodyContactY: geometry.backY,
   strokeX: 0,
   strokeY: 0,
 };
@@ -1298,7 +1338,7 @@ function drawTailSpine(action, seconds) {
   const dx = target ? target.x - goal.x : 0;
   const dy = target ? target.y - goal.y : 0;
   const limit = Math.max(1, Math.hypot(dx, dy) / (geometry.tailWidth * 0.85));
-  const rate = target ? 22 : 10;
+  const rate = target ? 36 : 10;
   const x = approach(tailDisplacement?.x ?? 0, dx / limit, rate, seconds);
   const y = approach(tailDisplacement?.y ?? 0, dy / limit, rate, seconds);
   if (!target && Math.hypot(x, y) < 0.25) {
@@ -1344,11 +1384,31 @@ function keyboardContact(now) {
   };
 }
 
-function moveTouchContact(x, y, seconds) {
+function moveTouchContact(x, y, seconds, direct = false) {
   const distance = Math.hypot(x - pose.contactX, y - pose.contactY);
-  const amount = Math.min(1 - Math.exp(-32 * seconds), TOUCH_TRAVEL_SPEED * seconds / Math.max(1, distance));
+  const ease = 1 - Math.exp(-(direct ? 105 : 54) * seconds);
+  const limit = TOUCH_TRANSITION_SPEED * seconds / Math.max(1, distance);
+  const amount = direct ? ease : Math.min(ease, limit);
   pose.contactX += (x - pose.contactX) * amount;
   pose.contactY += (y - pose.contactY) * amount;
+}
+
+function updateBodyPressure(action, followingTail, touching, moving, motionScale, seconds) {
+  const zone = followingTail ? null : action?.zone;
+  let pressure = 0;
+  if (zone === "head" || zone === "back") {
+    pose.bodyContactX = pose.contactX;
+    pose.bodyContactY = pose.contactY;
+    const speed = Math.hypot(pose.contactX - hand.x, pose.contactY - hand.y) / Math.max(seconds, 0.008);
+    const stroke = moving ? 0.62 + 0.38 * Math.min(1, speed / 1300) : 0;
+    const held = pointerId !== null ? 0.46 : 0;
+    const landed = touching ? Math.max(0, (hand.entry - 0.65) / 0.35) : 1;
+    pressure = Math.max(stroke, held) * landed * motionScale;
+  }
+  const head = zone === "head" ? pressure : 0;
+  const back = zone === "back" ? pressure : 0;
+  pose.head = approach(pose.head, head, head > pose.head ? 25 : 9, seconds);
+  pose.back = approach(pose.back, back, back > pose.back ? 25 : 9, seconds);
 }
 
 function render(now) {
@@ -1364,9 +1424,10 @@ function render(now) {
   const atTip = action?.zone === "tail-tip";
   const followingTail = tailHeld || atTip || (touching && touchTailJoined);
   if (followingTail) {
-    const progress = approach(pose.tailProgress, tailHeld ? action.progress : atTip ? 1 : 0, 30, seconds);
-    const maxStep = TOUCH_TRAVEL_SPEED * seconds / geometry.tailLength;
-    pose.tailProgress = touching
+    const joinedGrip = tailHeld && (!touching || touchTailJoined);
+    const progress = approach(pose.tailProgress, tailHeld ? action.progress : atTip ? 1 : 0, joinedGrip ? 72 : 38, seconds);
+    const maxStep = TOUCH_TRANSITION_SPEED * seconds / geometry.tailLength;
+    pose.tailProgress = touching && !joinedGrip
       ? pose.tailProgress + Math.max(-maxStep, Math.min(maxStep, progress - pose.tailProgress))
       : progress;
   }
@@ -1384,6 +1445,7 @@ function render(now) {
 
   let handTilt = 0;
   if (followingTail) {
+    directBodyFollow = false;
     const contact = tailPointAt(spine, pose.tailProgress);
     if (!touching || touchTailJoined) {
       pose.contactX = contact.x;
@@ -1407,12 +1469,16 @@ function render(now) {
       if (!touching) target.classList.remove("is-following");
     }
   } else if (touching && action?.contact) {
-    moveTouchContact(action.contact.x, action.contact.y, seconds);
+    const goal = action.contact;
+    const onFur = goal.x === action.x && goal.y === action.y;
+    moveTouchContact(goal.x, goal.y, seconds, directBodyFollow && onFur);
     const contact = closestBodyContact(pose.contactX, pose.contactY, geometry, art.body);
     pose.contactX = contact.x;
     pose.contactY = contact.y;
+    directBodyFollow = onFur && (directBodyFollow || Math.hypot(goal.x - contact.x, goal.y - contact.y) < 12);
   } else {
-    const contactRate = action ? 43 : 6;
+    directBodyFollow = false;
+    const contactRate = action ? 95 : 6;
     pose.contactX = approach(pose.contactX, action?.x ?? geometry.backX, contactRate, seconds);
     pose.contactY = approach(pose.contactY, action?.y ?? geometry.backY, contactRate, seconds);
   }
@@ -1421,15 +1487,14 @@ function render(now) {
   const motionLength = moving ? Math.max(1, Math.hypot(action.dx, action.dy)) : 1;
   pose.strokeX = approach(pose.strokeX, moving ? action.dx / motionLength : 0, 20, seconds);
   pose.strokeY = approach(pose.strokeY, moving ? action.dy / motionLength : 0, 20, seconds);
-  pose.head = approach(pose.head, moving && action.zone === "head" ? motionScale : 0, moving ? 20 : 7, seconds);
-  pose.back = approach(pose.back, moving && action.zone === "back" ? motionScale : 0, moving ? 20 : 7, seconds);
-  hand.x = pose.contactX;
-  hand.y = pose.contactY;
-  hand.visible = !view.mobile || Boolean(action);
   const entry = touching && !reducedMotion.matches
     ? Math.max(0, Math.min(1, (now - touchStartedAt) / TOUCH_ENTRY_MS))
     : 1;
   hand.entry = 1 - (1 - entry) ** 2;
+  updateBodyPressure(action, followingTail, touching, moving, motionScale, seconds);
+  hand.x = pose.contactX;
+  hand.y = pose.contactY;
+  hand.visible = !view.mobile || Boolean(action);
   hand.grip = approach(hand.grip, tailHeld && (!touching || touchTailJoined) ? 1 : 0, 28, seconds);
   const tiltLimit = followingTail ? 0.32 : 0.13;
   const tilt = Math.max(-tiltLimit, Math.min(tiltLimit, (hand.x - geometry.backX) / 2400 + handTilt));
@@ -1461,13 +1526,22 @@ function scenePoint(event) {
   };
 }
 
+function pettingZone(x, y) {
+  const zone = hitCat(x, y, pose, cat, art, spine, geometry);
+  const width = geometry.tailWidth;
+  if (zone === "tail" || zone === "head" || !ready(art.body) || !ready(art.tail)
+    || x <= geometry.rootX || (zone === "back" && x <= geometry.rootX + width * 0.14)) return zone;
+
+  const nearby = tailSurfacePoint(x, y, spine);
+  const reach = width * (zone === "back" ? 0.36 : 0.55);
+  if (nearby.progress <= 0.14 || nearby.distance > reach) return zone;
+  if (nearby.progress > 0.9 && beyondTailTip(x, y, spine)) return zone;
+  return "tail";
+}
+
 function updatePointer(event, pressed = false) {
   const { x, y } = scenePoint(event);
-  let zone = hitCat(x, y, pose, cat, art, spine, geometry);
-  if (!zone && pressed && ready(art.tail)) {
-    const nearby = tailSurfacePoint(x, y, spine);
-    if (nearby.progress > 0.14 && nearby.distance <= geometry.tailWidth * 0.55) zone = "tail";
-  }
+  let zone = pettingZone(x, y);
   const now = performance.now();
   const touching = touchStartedAt !== null;
 
@@ -1539,6 +1613,7 @@ function stopPetting() {
   }
   touchStartedAt = null;
   touchTailJoined = false;
+  directBodyFollow = false;
   if (view.mobile) hand.visible = false;
   passedTail = null;
   keyboard = null;
