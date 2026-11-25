@@ -328,24 +328,24 @@ const cats = [
   {
     id: "ginger-tabby",
     name: "小猫",
-    body: "./tabby-body-7c64a2ad1a.webp",
-    tail: "./tabby-tail-304642b1c8.webp",
+    body: "./tabby-body-light-58d33be471.webp",
+    tail: "./tabby-tail-light-39c98c164c.webp",
     thumbnail: "./tabby-thumb-ea21641d60.webp",
     geometry: tabbyGeometry,
   },
   {
     id: "tangyuan",
     name: "汤圆",
-    body: "./tangyuan-coat-body-22e16b1eee.webp",
-    tail: "./black-coat-tail-19cef65783.webp",
+    body: "./tangyuan-coat-body-light-86c73da7a4.webp",
+    tail: "./black-coat-tail-light-8587f2c274.webp",
     thumbnail: "./tangyuan-coat-thumb-33e9fbb748.webp",
     geometry: blackCoatGeometry,
   },
   {
     id: "ruibao",
     name: "瑞宝",
-    body: "./ruibao-coat-body-af675f1c91.webp",
-    tail: "./black-coat-tail-19cef65783.webp",
+    body: "./ruibao-coat-body-light-6f6548099b.webp",
+    tail: "./black-coat-tail-light-8587f2c274.webp",
     thumbnail: "./ruibao-coat-thumb-483496e2e3.webp",
     geometry: blackCoatGeometry,
   },
@@ -411,8 +411,8 @@ const backgrounds = [
 ];
 
 const hands = {
-  open: { image: "./palm-open-a0d67a1808.webp", anchorX: 0.36, anchorY: 0.11 },
-  curled: { image: "./palm-tail-beca6ff002.webp", anchorX: 0.44, anchorY: 0.16 },
+  open: { image: "./palm-open-light-6d0c0db826.webp", anchorX: 0.36, anchorY: 0.11 },
+  curled: { image: "./palm-tail-light-04187215a1.webp", anchorX: 0.44, anchorY: 0.16 },
 };
 
 return { cats, backgrounds, hands };
@@ -1321,7 +1321,10 @@ function backgroundImage(item) {
 }
 
 function loadCat(item, retry = false) {
-  return { body: imageFor(item.body, "high", retry), tail: null };
+  return {
+    body: imageFor(item.body, "high", retry),
+    tail: imageFor(item.tail, "low"),
+  };
 }
 
 function ready(image) {
@@ -1348,8 +1351,6 @@ function watchSceneAssets() {
     clearTimeout(sceneLoadTimeout);
     assetStatus.hidden = true;
     target.disabled = false;
-    current.tail = imageFor(cat.tail, "low");
-    imageFor(hands.open.image);
     imageFor(hands.curled.image, "low");
     fitCat();
   };
@@ -1394,6 +1395,7 @@ function mountOptions(container, items, selected, choose) {
     const thumbnail = document.createElement("img");
     thumbnail.alt = "";
     thumbnail.decoding = "async";
+    thumbnail.fetchPriority = "low";
     thumbnail.src = item.thumbnail ?? item.body ?? backgroundImage(item);
 
     const label = document.createElement("span");
@@ -1410,6 +1412,9 @@ function mountOptions(container, items, selected, choose) {
     container.append(button);
   }
 }
+
+imageFor(backgroundImage(background));
+imageFor(hands.open.image, "low");
 
 mountOptions(document.querySelector("#cats"), cats, cat, (item) => {
   stopPetting();
@@ -1453,7 +1458,6 @@ assetRetry.addEventListener("click", () => {
   art = loadCat(cat, true);
   watchSceneAssets();
 });
-imageFor(backgroundImage(background));
 assetStatus.dataset.appReady = "true";
 watchSceneAssets();
 
