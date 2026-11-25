@@ -120,25 +120,22 @@ button:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
   gap: 10px;
 }
 .choices {
-  padding: 4px;
-  margin: -4px;
+  padding: 6px;
+  margin: -6px;
   overflow-x: auto;
   scrollbar-width: thin;
 }
 .options { flex: 0 0 auto; }
 .options:empty { min-height: 47px; }
 .backgrounds {
-  position: relative;
-  margin-left: 3px;
-  padding-left: 12px;
-}
-.backgrounds::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 11px;
-  bottom: 11px;
-  border-left: 1px solid var(--line);
+  flex-shrink: 1;
+  margin: -6px -6px -6px 3px;
+  padding: 6px 6px 6px 12px;
+  background: linear-gradient(var(--line), var(--line)) left center / 1px 27px no-repeat;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scroll-padding-inline: 12px 6px;
+  scrollbar-width: thin;
 }
 .option {
   display: block;
@@ -227,7 +224,13 @@ button:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
     overscroll-behavior-inline: contain;
     scrollbar-width: thin;
   }
-  .backgrounds::before { display: none; }
+  .backgrounds {
+    gap: 6px;
+    margin: -6px;
+    padding: 6px;
+    background: none;
+    scroll-padding-inline: 6px;
+  }
 }
 
 @media (max-width: 1024px) and (max-height: 550px) and (orientation: landscape) and (pointer: coarse) {
@@ -321,7 +324,56 @@ const backgrounds = [
     name: "日光布垫",
     image: "./daylight-linen-02bfe072dc.webp",
     compactImage: "./daylight-linen-small-dfa75e6077.jpg",
+    thumbnail: "./daylight-linen-thumb-eb401270a8.jpg",
     color: "#cfbfa3",
+  },
+  {
+    id: "bed",
+    name: "床上",
+    image: "./bed-0f3e71a053.jpg",
+    compactImage: "./bed-small-955eb5feac.jpg",
+    thumbnail: "./bed-thumb-89039c64c4.jpg",
+    color: "#e7e0d4",
+  },
+  {
+    id: "sofa",
+    name: "沙发",
+    image: "./sofa-3a7a88c9af.jpg",
+    compactImage: "./sofa-small-eca7eab992.jpg",
+    thumbnail: "./sofa-thumb-ba574c6d3e.jpg",
+    color: "#a9b2a3",
+  },
+  {
+    id: "cat-scratcher",
+    name: "猫抓板",
+    image: "./cat-scratcher-8b360562fc.jpg",
+    compactImage: "./cat-scratcher-small-fe2691d79e.jpg",
+    thumbnail: "./cat-scratcher-thumb-795ef91f35.jpg",
+    color: "#bf9b70",
+  },
+  {
+    id: "grass",
+    name: "草地",
+    image: "./grass-e0079597f0.jpg",
+    compactImage: "./grass-small-5850e26cea.jpg",
+    thumbnail: "./grass-thumb-feb22de73a.jpg",
+    color: "#7a8e66",
+  },
+  {
+    id: "bathroom-sink",
+    name: "洗手池",
+    image: "./bathroom-sink-6badef2b3f.jpg",
+    compactImage: "./bathroom-sink-small-369eca7c65.jpg",
+    thumbnail: "./bathroom-sink-thumb-d0166252ba.jpg",
+    color: "#efebe0",
+  },
+  {
+    id: "tabletop",
+    name: "木桌",
+    image: "./tabletop-37c824b113.jpg",
+    compactImage: "./tabletop-small-81b97877d7.jpg",
+    thumbnail: "./tabletop-thumb-d5abf4e314.jpg",
+    color: "#d4b18a",
   },
 ];
 
