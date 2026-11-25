@@ -223,6 +223,8 @@ const shapedBodies = new WeakMap();
 const blendedBodies = new WeakMap();
 const shadedTails = new WeakMap();
 const TAIL_SEGMENTS = 24;
+const TAIL_SOCKET_LINKS = 2;
+const TAIL_STEERING_PASSES = 5;
 const BODY_SHAPE_COLUMNS = 24;
 const BODY_COLUMNS = 12;
 const BODY_ROWS = 6;
@@ -362,6 +364,8 @@ function tailSpine(geometry, pose = {}) {
     spine.push({ x: previous.x + Math.cos(angle) * length, y: previous.y + Math.sin(angle) * length });
   }
 
+  if (pose.tailTarget) steerTail(spine, pose.tailTarget);
+
   for (let index = 0; index < spine.length; index += 1) {
     const before = spine[Math.max(index - 1, 0)];
     const after = spine[Math.min(index + 1, spine.length - 1)];
@@ -374,6 +378,50 @@ function tailSpine(geometry, pose = {}) {
     spine[index].widthScale = 1 - pressure * 0.11 * Math.exp(-contact * contact) * clamp(index / 3);
   }
   return spine;
+}
+
+function steerTail(spine, target) {
+  const { x, y, progress } = target;
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(progress)) return;
+  const lastJoint = Math.ceil(clamp(progress) * TAIL_SEGMENTS) - 1;
+  if (lastJoint < TAIL_SOCKET_LINKS) return;
+
+  const contact = tailPointAt(spine, progress);
+  const turns = new Float64Array(TAIL_SEGMENTS);
+  let tipTurn = 0;
+
+  // Each hinge rotates the grip and the downstream tail together. This gives
+  // the skinned tail the same link lengths even if the target is out of reach.
+  for (let pass = 0; pass < TAIL_STEERING_PASSES; pass += 1) {
+    for (let joint = TAIL_SOCKET_LINKS; joint <= lastJoint; joint += 1) {
+      if (Math.hypot(x - contact.x, y - contact.y) < 0.75) return;
+      const pivot = spine[joint];
+      const dx = contact.x - pivot.x;
+      const dy = contact.y - pivot.y;
+      const goalX = x - pivot.x;
+      const goalY = y - pivot.y;
+      const turn = Math.atan2(dx * goalY - dy * goalX, dx * goalX + dy * goalY) * 0.55;
+      const limit = joint === TAIL_SOCKET_LINKS ? 0.1 : 0.15;
+      const correction = clamp(turn,
+        Math.max(-limit - turns[joint], -0.8 - tipTurn),
+        Math.min(limit - turns[joint], 0.8 - tipTurn));
+      if (Math.abs(correction) < 0.001) continue;
+
+      turns[joint] += correction;
+      tipTurn += correction;
+      const cosine = Math.cos(correction);
+      const sine = Math.sin(correction);
+      contact.x = pivot.x + dx * cosine - dy * sine;
+      contact.y = pivot.y + dx * sine + dy * cosine;
+      for (let index = joint + 1; index < spine.length; index += 1) {
+        const point = spine[index];
+        const offsetX = point.x - pivot.x;
+        const offsetY = point.y - pivot.y;
+        point.x = pivot.x + offsetX * cosine - offsetY * sine;
+        point.y = pivot.y + offsetX * sine + offsetY * cosine;
+      }
+    }
+  }
 }
 
 function tailRadius(geometry, progress) {
@@ -917,6 +965,7 @@ let previousTime = 0;
 let animation = 0;
 let intensity = 0;
 let tailSettlesAt = 0;
+let tailDisplacement = null;
 let passedTail = null;
 
 const pose = {
@@ -1006,6 +1055,7 @@ mountOptions(document.querySelector("#cats"), cats, cat, (item) => {
   pose.tailBend = 0;
   pose.tailFlex = 0;
   pose.tailPressure = 0;
+  tailDisplacement = null;
   spine = tailSpine(geometry, pose);
   saveSelection("cat", cat);
 });
@@ -1178,7 +1228,7 @@ function beyondTailTip(x, y, points) {
   return along > 8 && Math.abs(across) < geometry.tailWidth * 0.45;
 }
 
-function advanceTailStroke(stroke, x, y, now) {
+function advanceTailStroke(stroke, x, y, now, followFinger = false) {
   const dx = x - stroke.x;
   const dy = y - stroke.y;
   const step = Math.hypot(dx, dy);
@@ -1216,17 +1266,48 @@ function advanceTailStroke(stroke, x, y, now) {
   const contact = onDrawnTail ? drawn : ahead;
   const nearTip = Math.max(stroke.progress, drawn.progress, ahead.progress) > 0.94;
   stroke.slip = nearTip && beyondTailTip(fingerX, fingerY, goalSpine);
-  if (!stroke.slip && contact.distance > width * 0.57) return false;
+  const reach = width * (followFinger ? 0.9 : 0.57);
+  if (!stroke.slip && Math.min(drawn.distance, contact.distance) > reach) return false;
 
   const across = dy * Math.cos(angle) - dx * Math.sin(angle);
-  stroke.flex = Math.max(-0.14, Math.min(0.14, across / 42));
-  stroke.progress = stroke.slip ? 1 : contact.progress;
+  const along = dx * Math.cos(angle) + dy * Math.sin(angle);
+  const acrossTail = Math.abs(across) > Math.abs(along) * 0.82;
+  const steering = followFinger && !stroke.slip && (stroke.target || (acrossTail && drawn.distance > 7));
+  stroke.target = steering ? { x: fingerX, y: fingerY } : null;
+  stroke.flex = steering ? 0 : Math.max(-0.14, Math.min(0.14, across / 42));
+  if (stroke.slip) stroke.progress = 1;
+  else if (!steering || !acrossTail) stroke.progress = contact.progress;
   stroke.x = x;
   stroke.y = y;
   stroke.dx = dx;
   stroke.dy = dy;
   stroke.movedAt = now;
   return true;
+}
+
+function drawTailSpine(action, seconds) {
+  const base = tailSpine(geometry, pose);
+  const target = action?.target;
+  if (!target && !tailDisplacement) return base;
+
+  // The pointing position steers the curve without changing the outward-stroke
+  // progress. Ease the offset back to the base curve when contact ends.
+  const progress = target ? pose.tailProgress : tailDisplacement.progress;
+  const point = tailPointAt(base, progress);
+  const goal = target ? tailPointAt(base, action.progress) : point;
+  const dx = target ? target.x - goal.x : 0;
+  const dy = target ? target.y - goal.y : 0;
+  const limit = Math.max(1, Math.hypot(dx, dy) / (geometry.tailWidth * 0.85));
+  const rate = target ? 22 : 10;
+  const x = approach(tailDisplacement?.x ?? 0, dx / limit, rate, seconds);
+  const y = approach(tailDisplacement?.y ?? 0, dy / limit, rate, seconds);
+  if (!target && Math.hypot(x, y) < 0.25) {
+    tailDisplacement = null;
+    return base;
+  }
+
+  tailDisplacement = { x, y, progress };
+  return tailSpine(geometry, { ...pose, tailTarget: { x: point.x + x, y: point.y + y, progress } });
 }
 
 function releaseTail(now) {
@@ -1299,7 +1380,7 @@ function render(now) {
   const activeFlex = tailHeld && now - action.movedAt < 120 ? action.flex : 0;
   pose.tailFlex = approach(pose.tailFlex, activeFlex * motionScale, 12, seconds);
   pose.tailPressure = approach(pose.tailPressure, tailHeld ? motionScale : 0, 17, seconds);
-  spine = tailSpine(geometry, pose);
+  spine = drawTailSpine(tailHeld ? action : null, seconds);
 
   let handTilt = 0;
   if (followingTail) {
@@ -1383,6 +1464,10 @@ function scenePoint(event) {
 function updatePointer(event, pressed = false) {
   const { x, y } = scenePoint(event);
   let zone = hitCat(x, y, pose, cat, art, spine, geometry);
+  if (!zone && pressed && ready(art.tail)) {
+    const nearby = tailSurfacePoint(x, y, spine);
+    if (nearby.progress > 0.14 && nearby.distance <= geometry.tailWidth * 0.55) zone = "tail";
+  }
   const now = performance.now();
   const touching = touchStartedAt !== null;
 
@@ -1390,7 +1475,7 @@ function updatePointer(event, pressed = false) {
   keyboard = null;
   if (gesture?.zone === "tail") {
     const returningToBack = zone === "back" && x <= geometry.rootX + geometry.tailWidth * 0.14;
-    if (!returningToBack && advanceTailStroke(gesture, x, y, now)) {
+    if (!returningToBack && advanceTailStroke(gesture, x, y, now, true)) {
       target.classList.toggle("is-following", ready(imageFor(hands.open.image)));
       return;
     }
