@@ -148,14 +148,13 @@ button:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
   padding: 0;
   cursor: pointer;
 }
-.option img {
+.option-thumbnail {
   display: block;
   width: 100%;
   height: 47px;
   border: 1px solid #a3896d56;
   border-radius: 11px;
-  background: #dfc3a2;
-  object-fit: cover;
+  background: #dfc3a2 var(--picker-image) var(--thumb-x) var(--thumb-y) / 600% 200% no-repeat padding-box;
 }
 .option-label {
   color: #69574a;
@@ -164,12 +163,11 @@ button:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
   text-align: center;
   white-space: nowrap;
 }
-.option:hover img { outline: 1px solid #8f745b; outline-offset: 2px; }
-.option[aria-pressed="true"] img { outline: 1.5px solid #5f4434; outline-offset: 2px; }
+.option:hover .option-thumbnail { outline: 1px solid #8f745b; outline-offset: 2px; }
+.option[aria-pressed="true"] .option-thumbnail { outline: 1.5px solid #5f4434; outline-offset: 2px; }
 .option[aria-pressed="true"] .option-label { color: var(--focus); font-weight: 600; }
 .option:focus-visible { outline: none; }
-.option:focus-visible img { outline: 2.5px solid var(--focus); outline-offset: 3px; }
-.cats img { object-position: 14% 42%; }
+.option:focus-visible .option-thumbnail { outline: 2.5px solid var(--focus); outline-offset: 3px; }
 .size-controls {
   display: grid;
   flex: 0 1 220px;
@@ -310,7 +308,7 @@ button:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
   </script>
 <script>
 document.addEventListener("DOMContentLoaded", () => {
-const { cats, backgrounds, hands } = (() => {
+const { cats, backgrounds, hands, pickerImage } = (() => {
 const tabbyGeometry = {
   bodyX: 145,
   bodyY: 216,
@@ -328,41 +326,51 @@ const cats = [
   {
     id: "ginger-tabby",
     name: "小猫",
-    body: "./tabby-body-light-58d33be471.webp",
+    body: "./tabby-body-light-desktop-46b9e72302.webp",
+    compactBody: "./tabby-body-light-compact-882067d4b7.webp",
     tail: "./tabby-tail-light-39c98c164c.webp",
-    thumbnail: "./tabby-thumb-ea21641d60.webp",
+    compactTail: "./tabby-tail-light-compact-3617cf330a.webp",
+    thumbnail: 0,
     geometry: tabbyGeometry,
   },
   {
     id: "tangyuan",
     name: "汤圆",
     body: "./tangyuan-coat-body-light-86c73da7a4.webp",
+    compactBody: "./tangyuan-coat-body-light-compact-8224f6336a.webp",
     tail: "./black-coat-tail-light-8587f2c274.webp",
-    thumbnail: "./tangyuan-coat-thumb-33e9fbb748.webp",
+    compactTail: "./black-coat-tail-light-compact-1d28cd66f5.webp",
+    thumbnail: 1,
     geometry: blackCoatGeometry,
   },
   {
     id: "ruibao",
     name: "瑞宝",
     body: "./ruibao-coat-body-light-6f6548099b.webp",
+    compactBody: "./ruibao-coat-body-light-compact-ac06dd5003.webp",
     tail: "./black-coat-tail-light-8587f2c274.webp",
-    thumbnail: "./ruibao-coat-thumb-483496e2e3.webp",
+    compactTail: "./black-coat-tail-light-compact-1d28cd66f5.webp",
+    thumbnail: 2,
     geometry: blackCoatGeometry,
   },
   {
     id: "xiaomi",
     name: "小咪",
-    body: "./xiaomi-body-fcd21d0101.webp",
+    body: "./xiaomi-body-desktop-3bfc201551.webp",
+    compactBody: "./xiaomi-body-compact-3820502242.webp",
     tail: "./ginger-coat-tail-072685e103.webp",
-    thumbnail: "./xiaomi-thumb-35a7905405.webp",
+    compactTail: "./ginger-coat-tail-compact-1abba6267f.webp",
+    thumbnail: 3,
     geometry: tabbyGeometry,
   },
   {
     id: "323",
     name: "323",
-    body: "./323-body-ae0090f263.webp",
+    body: "./323-body-desktop-5ed5e126af.webp",
+    compactBody: "./323-body-compact-c1276f5ded.webp",
     tail: "./ginger-coat-tail-072685e103.webp",
-    thumbnail: "./323-thumb-5caed661a1.webp",
+    compactTail: "./ginger-coat-tail-compact-1abba6267f.webp",
+    thumbnail: 4,
     geometry: tabbyGeometry,
   },
 ];
@@ -371,9 +379,9 @@ const backgrounds = [
   {
     id: "window-nook",
     name: "日光布垫",
-    image: "./daylight-linen-light-e9ca53b566.webp",
+    image: "./daylight-linen-desktop-8433ea476d.webp",
     compactImage: "./daylight-linen-small-light-034f76533d.webp",
-    thumbnail: "./daylight-linen-thumb-eb401270a8.jpg",
+    thumbnail: 5,
     color: "#cfbfa3",
   },
   {
@@ -381,7 +389,7 @@ const backgrounds = [
     name: "床上",
     image: "./bed-9a6e58bd13.webp",
     compactImage: "./bed-small-287a070073.webp",
-    thumbnail: "./bed-thumb-89039c64c4.jpg",
+    thumbnail: 6,
     color: "#e7e0d4",
   },
   {
@@ -389,7 +397,7 @@ const backgrounds = [
     name: "沙发",
     image: "./sofa-0eb30a557f.webp",
     compactImage: "./sofa-small-5703eed158.webp",
-    thumbnail: "./sofa-thumb-ba574c6d3e.jpg",
+    thumbnail: 7,
     color: "#a9b2a3",
   },
   {
@@ -397,7 +405,7 @@ const backgrounds = [
     name: "猫抓板",
     image: "./cat-scratcher-46600b30f2.webp",
     compactImage: "./cat-scratcher-small-8b2a3ce5dc.webp",
-    thumbnail: "./cat-scratcher-thumb-795ef91f35.jpg",
+    thumbnail: 8,
     color: "#bf9b70",
   },
   {
@@ -405,7 +413,7 @@ const backgrounds = [
     name: "草地",
     image: "./grass-95af8e7283.webp",
     compactImage: "./grass-small-179e509713.webp",
-    thumbnail: "./grass-thumb-feb22de73a.jpg",
+    thumbnail: 9,
     color: "#7a8e66",
   },
   {
@@ -413,7 +421,7 @@ const backgrounds = [
     name: "洗手池",
     image: "./bathroom-sink-1c55de6441.webp",
     compactImage: "./bathroom-sink-small-8069d86cab.webp",
-    thumbnail: "./bathroom-sink-thumb-d0166252ba.jpg",
+    thumbnail: 10,
     color: "#efebe0",
   },
   {
@@ -421,17 +429,19 @@ const backgrounds = [
     name: "木桌",
     image: "./tabletop-6a196ba3af.webp",
     compactImage: "./tabletop-small-d4a56ecbb6.webp",
-    thumbnail: "./tabletop-thumb-d5abf4e314.jpg",
+    thumbnail: 11,
     color: "#d4b18a",
   },
 ];
+
+const pickerImage = "./picker-thumbnails-3096fa2bec.webp";
 
 const hands = {
   open: { image: "./palm-open-light-6d0c0db826.webp", anchorX: 0.36, anchorY: 0.11 },
   curled: { image: "./palm-tail-light-04187215a1.webp", anchorX: 0.44, anchorY: 0.16 },
 };
 
-return { cats, backgrounds, hands };
+return { cats, backgrounds, hands, pickerImage };
 })();
 const { catGeometry, closestBodyContact, drawCat, hitCat, tailEdgeDistance, tailJointAngles, tailPointAt, tailSpine, tailSurfacePoint } = (() => {
 const bodyMasks = new WeakMap();
@@ -1274,6 +1284,7 @@ const assetRetry = document.querySelector("#asset-retry");
 const context = canvas.getContext("2d");
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const mobileLayout = window.matchMedia("(max-width: 620px), (max-width: 1024px) and (max-height: 550px) and (pointer: coarse)");
+const compactArtwork = window.matchMedia("(max-width: 620px)");
 const purr = new Purr();
 const images = new Map();
 const view = {
@@ -1337,9 +1348,10 @@ function backgroundImage(item) {
 }
 
 function loadCat(item, retry = false) {
+  const compact = compactArtwork.matches;
   return {
-    body: imageFor(item.body, "high", retry),
-    tail: imageFor(item.tail, "low"),
+    body: imageFor(compact ? item.compactBody : item.body, "high", retry),
+    tail: imageFor(compact ? item.compactTail : item.tail, "low"),
   };
 }
 
@@ -1367,7 +1379,6 @@ function watchSceneAssets() {
     clearTimeout(sceneLoadTimeout);
     assetStatus.hidden = true;
     target.disabled = false;
-    imageFor(hands.curled.image, "low");
     fitCat();
   };
 
@@ -1381,6 +1392,30 @@ function watchSceneAssets() {
     sceneLoadTimeout = setTimeout(() => showFailure("场景加载较慢"), SCENE_TIMEOUT_MS);
   }
 }
+
+compactArtwork.addEventListener("change", () => {
+  const current = art;
+  const compact = compactArtwork.matches;
+  const next = loadCat(cat);
+  if (next.body === current.body && next.tail === current.tail) return;
+
+  if (!ready(current.body)) {
+    art = next;
+    watchSceneAssets();
+    return;
+  }
+
+  // Keep the current artwork on screen while downloading the other size.
+  const swapWhenReady = () => {
+    if (art !== current || compactArtwork.matches !== compact || !ready(next.body) || !ready(next.tail)) return;
+    art = next;
+    fitCat();
+  };
+  for (const image of [next.body, next.tail]) {
+    if (!image.complete) image.addEventListener("load", swapWhenReady, { once: true });
+  }
+  swapWhenReady();
+});
 
 function readSelection(kind, items) {
   try {
@@ -1408,11 +1443,12 @@ function mountOptions(container, items, selected, choose) {
     button.setAttribute("aria-label", item.name);
     button.setAttribute("aria-pressed", String(item === selected));
 
-    const thumbnail = document.createElement("img");
-    thumbnail.alt = "";
-    thumbnail.decoding = "async";
-    thumbnail.fetchPriority = "low";
-    thumbnail.src = item.thumbnail ?? item.body ?? backgroundImage(item);
+    const thumbnail = document.createElement("span");
+    thumbnail.className = "option-thumbnail";
+    thumbnail.setAttribute("aria-hidden", "true");
+    // The atlas has six columns and two rows, in catalog order.
+    thumbnail.style.setProperty("--thumb-x", `${(item.thumbnail % 6) * 20}%`);
+    thumbnail.style.setProperty("--thumb-y", `${Math.floor(item.thumbnail / 6) * 100}%`);
 
     const label = document.createElement("span");
     label.className = "option-label";
@@ -1430,7 +1466,8 @@ function mountOptions(container, items, selected, choose) {
 }
 
 imageFor(backgroundImage(background));
-imageFor(hands.open.image, "low");
+if (!mobileLayout.matches) imageFor(hands.open.image, "low");
+viewer.style.setProperty("--picker-image", `url("${pickerImage}")`);
 
 mountOptions(document.querySelector("#cats"), cats, cat, (item) => {
   stopPetting();
@@ -1590,7 +1627,7 @@ function drawHand() {
   const handX = (view.catX + hand.x * view.catScale - view.x) / view.scale;
   const handY = (view.catY + hand.y * view.catScale - view.y) / view.scale;
   const placement = { width, bottom, x: handX, y: startY + (handY - startY) * entry };
-  const grip = ready(imageFor(hands.curled.image)) ? hand.grip : 0;
+  const grip = hand.grip >= 0.015 && ready(imageFor(hands.curled.image, "low")) ? hand.grip : 0;
   const radius = 64 - grip * 19;
   const shadowX = 23 - grip * 17;
   const shadowY = 35 - grip * 26;
