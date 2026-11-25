@@ -311,6 +311,19 @@ button:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 <script>
 document.addEventListener("DOMContentLoaded", () => {
 const { cats, backgrounds, hands } = (() => {
+const tabbyGeometry = {
+  bodyX: 145,
+  bodyY: 216,
+  bodyWidth: 687,
+  rootU: 0.935,
+  rootV: 0.526,
+};
+
+const blackCoatGeometry = {
+  ...tabbyGeometry,
+  tailRootShade: ['#17171655', '#17171633', '#17171600'],
+};
+
 const cats = [
   {
     id: "ginger-tabby",
@@ -318,57 +331,23 @@ const cats = [
     body: "./tabby-body-7c64a2ad1a.webp",
     tail: "./tabby-tail-304642b1c8.webp",
     thumbnail: "./tabby-thumb-ea21641d60.webp",
-    geometry: {
-      bodyX: 145,
-      bodyY: 216,
-      bodyWidth: 687,
-      rootU: 0.935,
-      rootV: 0.526,
-    },
+    geometry: tabbyGeometry,
   },
   {
     id: "tangyuan",
     name: "汤圆",
-    body: "./tangyuan-resting-body-bd31626545.webp",
-    tail: "./black-tail-dbb943ec02.webp",
-    thumbnail: "./tangyuan-resting-thumb-542f134ea2.webp",
-    geometry: {
-      bodyX: 145,
-      bodyY: 174,
-      bodyWidth: 687,
-      bodyHeight: 437,
-      rootU: 0.932,
-      rootV: 0.475,
-      headU: 0.245,
-      headV: 0.445,
-      headEndU: 0.44,
-      backV: 0.43,
-      tailWidth: 94,
-      tailLength: 326,
-      tailRootShade: ['#17171655', '#17171633', '#17171600'],
-    },
+    body: "./tangyuan-coat-body-22e16b1eee.webp",
+    tail: "./black-coat-tail-19cef65783.webp",
+    thumbnail: "./tangyuan-coat-thumb-33e9fbb748.webp",
+    geometry: blackCoatGeometry,
   },
   {
     id: "ruibao",
     name: "瑞宝",
-    body: "./ruibao-resting-body-132dbf1a76.webp",
-    tail: "./black-tail-dbb943ec02.webp",
-    thumbnail: "./ruibao-resting-thumb-963771bcaf.webp",
-    geometry: {
-      bodyX: 145,
-      bodyY: 178,
-      bodyWidth: 687,
-      bodyHeight: 456,
-      rootU: 0.93,
-      rootV: 0.445,
-      headU: 0.23,
-      headV: 0.46,
-      headEndU: 0.43,
-      backV: 0.43,
-      tailWidth: 94,
-      tailLength: 326,
-      tailRootShade: ['#17171655', '#17171633', '#17171600'],
-    },
+    body: "./ruibao-coat-body-af675f1c91.webp",
+    tail: "./black-coat-tail-19cef65783.webp",
+    thumbnail: "./ruibao-coat-thumb-483496e2e3.webp",
+    geometry: blackCoatGeometry,
   },
 ];
 
