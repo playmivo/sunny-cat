@@ -126,7 +126,7 @@ button:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
   scrollbar-width: thin;
 }
 .options { flex: 0 0 auto; }
-.options:empty { min-height: 47px; }
+.options:empty { min-height: 66px; }
 .backgrounds {
   flex-shrink: 1;
   margin: -6px -6px -6px 3px;
@@ -138,26 +138,37 @@ button:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
   scrollbar-width: thin;
 }
 .option {
-  display: block;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   flex: 0 0 auto;
+  gap: 4px;
   width: 47px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+}
+.option img {
+  display: block;
+  width: 100%;
   height: 47px;
   border: 1px solid #a3896d56;
   border-radius: 11px;
   background: #dfc3a2;
-  overflow: hidden;
-  padding: 0;
-  cursor: pointer;
-}
-.option:hover { outline: 1px solid #8f745b; outline-offset: 2px; }
-.option[aria-pressed="true"] { outline: 1.5px solid #5f4434; outline-offset: 2px; }
-.option:focus-visible { outline: 2.5px solid var(--focus); outline-offset: 3px; }
-.option img {
-  display: block;
-  width: 100%;
-  height: 100%;
   object-fit: cover;
 }
+.option-label {
+  color: #69574a;
+  font-size: 11px;
+  line-height: 15px;
+  text-align: center;
+  white-space: nowrap;
+}
+.option:hover img { outline: 1px solid #8f745b; outline-offset: 2px; }
+.option[aria-pressed="true"] img { outline: 1.5px solid #5f4434; outline-offset: 2px; }
+.option[aria-pressed="true"] .option-label { color: var(--focus); font-weight: 600; }
+.option:focus-visible { outline: none; }
+.option:focus-visible img { outline: 2.5px solid var(--focus); outline-offset: 3px; }
 .cats img { object-position: 14% 42%; }
 .size-controls {
   display: grid;
@@ -218,18 +229,16 @@ button:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
   .choices { display: contents; }
   .size-controls { min-width: 0; }
   .options {
-    margin: -4px;
-    padding: 4px;
+    margin: -6px;
+    padding: 6px;
     overflow-x: auto;
     overscroll-behavior-inline: contain;
+    scroll-padding-inline: 6px;
     scrollbar-width: thin;
   }
   .backgrounds {
     gap: 6px;
-    margin: -6px;
-    padding: 6px;
     background: none;
-    scroll-padding-inline: 6px;
   }
 }
 
@@ -305,15 +314,54 @@ const { cats, backgrounds, hands } = (() => {
 const cats = [
   {
     id: "ginger-tabby",
-    name: "橘猫",
+    name: "小猫",
     body: "./tabby-body-7c64a2ad1a.webp",
     tail: "./tabby-tail-304642b1c8.webp",
+    thumbnail: "./tabby-thumb-ea21641d60.webp",
     geometry: {
       bodyX: 145,
       bodyY: 216,
       bodyWidth: 687,
       rootU: 0.935,
       rootV: 0.526,
+    },
+  },
+  {
+    id: "tangyuan",
+    name: "汤圆",
+    body: "./tangyuan-body-37a09a78a7.webp",
+    tail: "./black-tail-dbb943ec02.webp",
+    thumbnail: "./tangyuan-thumb-f89fab7a13.webp",
+    geometry: {
+      bodyX: 145,
+      bodyY: 209,
+      bodyWidth: 687,
+      bodyHeight: 343.5,
+      rootU: 0.931,
+      rootV: 0.51,
+      headEndU: 0.31,
+      tailWidth: 94,
+      tailLength: 326,
+      tailRootShade: ['#17171655', '#17171633', '#17171600'],
+    },
+  },
+  {
+    id: "ruibao",
+    name: "瑞宝",
+    body: "./ruibao-body-77cb7f10b3.webp",
+    tail: "./black-tail-dbb943ec02.webp",
+    thumbnail: "./ruibao-thumb-6f9f6372c6.webp",
+    geometry: {
+      bodyX: 145,
+      bodyY: 213,
+      bodyWidth: 687,
+      bodyHeight: 331,
+      rootU: 0.93,
+      rootV: 0.52,
+      headEndU: 0.3,
+      tailWidth: 94,
+      tailLength: 326,
+      tailRootShade: ['#17171655', '#17171633', '#17171600'],
     },
   },
 ];
@@ -1362,7 +1410,11 @@ function mountOptions(container, items, selected, choose) {
     thumbnail.alt = "";
     thumbnail.decoding = "async";
     thumbnail.src = item.thumbnail ?? item.body ?? backgroundImage(item);
-    button.append(thumbnail);
+
+    const label = document.createElement("span");
+    label.className = "option-label";
+    label.textContent = item.name;
+    button.append(thumbnail, label);
 
     button.addEventListener("click", () => {
       if (button.getAttribute("aria-pressed") === "true") return;
@@ -1379,10 +1431,15 @@ mountOptions(document.querySelector("#cats"), cats, cat, (item) => {
   cat = item;
   art = loadCat(cat);
   geometry = catGeometry(cat, art, bodySize);
-  pose.tailOpen = 0;
-  pose.tailBend = 0;
-  pose.tailFlex = 0;
-  pose.tailPressure = 0;
+  Object.assign(pose, {
+    head: 0, back: 0,
+    tailOpen: 0, tailBend: 0, tailProgress: 0, tailFlex: 0, tailPressure: 0,
+    contactX: geometry.backX, contactY: geometry.backY,
+    bodyContactX: geometry.backX, bodyContactY: geometry.backY,
+    strokeX: 0, strokeY: 0,
+  });
+  hand.grip = 0;
+  hand.tilt = 0;
   tailRecovery = null;
   tailDisplacement = null;
   spine = tailSpine(geometry, pose);
