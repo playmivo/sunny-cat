@@ -33,8 +33,8 @@ button:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
 .viewer {
   display: grid;
   gap: 10px;
-  width: min(100%, 1160px, calc((100vh - 84px) * 1.6));
-  width: min(100%, 1160px, calc((100dvh - 84px) * 1.6));
+  width: min(100%, 1160px, calc((100vh - 126px) * 1.6));
+  width: min(100%, 1160px, calc((100dvh - 126px) * 1.6));
   min-width: 0;
 }
 .scene {
@@ -162,18 +162,34 @@ button:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
   object-fit: cover;
 }
 .cats img { object-position: 14% 42%; }
-.size-control {
-  display: flex;
-  flex: 0 1 200px;
+.size-controls {
+  display: grid;
+  flex: 0 1 220px;
   min-width: 144px;
+  gap: 4px;
+  color: var(--focus);
+}
+.size-control {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) 24px;
   min-height: 44px;
   align-items: center;
   gap: 9px;
-  color: var(--focus);
-  font-size: 13px;
 }
+.size-control svg {
+  display: block;
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.size-control svg path[fill] { stroke: none; }
+.size-control svg path[transform] { vector-effect: non-scaling-stroke; }
 .size-control input {
-  flex: 1 1 0;
+  width: 100%;
   min-width: 0;
   min-height: 44px;
   margin: 0;
@@ -203,6 +219,7 @@ button:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
     gap: 10px;
   }
   .choices { display: contents; }
+  .size-controls { min-width: 0; }
   .options {
     margin: -4px;
     padding: 4px;
@@ -238,11 +255,26 @@ button:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
         <div class="options cats" id="cats" role="group" aria-label="选择猫咪"></div>
         <div class="options backgrounds" id="backgrounds" role="group" aria-label="选择背景"></div>
       </div>
-      <label class="size-control">
-        <span aria-hidden="true">瘦</span>
-        <input id="body-size" type="range" min="-100" max="100" step="1" value="0" aria-label="猫咪胖瘦">
-        <span aria-hidden="true">胖</span>
-      </label>
+      <div class="size-controls" role="group" aria-label="猫咪外观">
+        <label class="size-control">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path fill="currentColor" d="m7.5 8-1-4.5 4.1 2a5.1 5.1 0 0 1 2.8 0l4.1-2-1 4.5a4.5 4.5 0 0 1 1.3 3.2c0 1.8-.9 3.2-2.5 4 1.3 1.2 1.9 2.7 1.9 4.4v.9H6.8v-.9c0-1.7.6-3.2 1.9-4.4a4.3 4.3 0 0 1-2.5-4A4.5 4.5 0 0 1 7.5 8Z"/>
+          </svg>
+          <input id="body-size" type="range" min="-100" max="100" step="1" value="0" aria-label="猫咪胖瘦">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path fill="currentColor" d="m7.5 8-1-4.5 4.1 2a5.1 5.1 0 0 1 2.8 0l4.1-2-1 4.5a4.5 4.5 0 0 1 1.3 3.2c0 1.4-.5 2.5-1.5 3.3 2.9.9 4.7 2.7 4.7 4.8v1.2H3v-1.2c0-2.1 1.8-3.9 4.7-4.8-1-.8-1.5-1.9-1.5-3.3A4.5 4.5 0 0 1 7.5 8Z"/>
+          </svg>
+        </label>
+        <label class="size-control">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M6 10V4l4 3h4l4-3v6c1 1.3 1.5 2.7 1.5 4 0 3.4-3.4 5.5-7.5 5.5S4.5 17.4 4.5 14c0-1.3.5-2.7 1.5-4Z" transform="translate(4.6 4.6) scale(.62)"/>
+          </svg>
+          <input id="cat-scale" type="range" min="75" max="110" step="1" value="100" aria-label="猫咪大小">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M6 10V4l4 3h4l4-3v6c1 1.3 1.5 2.7 1.5 4 0 3.4-3.4 5.5-7.5 5.5S4.5 17.4 4.5 14c0-1.3.5-2.7 1.5-4Z"/>
+          </svg>
+        </label>
+      </div>
     </div>
     <p class="sr-only" id="pet-help">用鼠标划过猫的头和背，或按住场景用手指划动。沿尾巴向外划会伸展，划回尾根内侧可以继续摸背。空格摸背，T 键摸尾巴。</p>
     <p class="sr-only" id="selection-status" role="status"></p>
@@ -1065,6 +1097,8 @@ const scene = document.querySelector("#scene");
 const canvas = document.querySelector("#stage");
 const target = document.querySelector("#pet-target");
 const sizeControl = document.querySelector("#body-size");
+const catScaleControl = document.querySelector("#cat-scale");
+const maximumCatScale = Number(catScaleControl.max);
 const selectionStatus = document.querySelector("#selection-status");
 const assetStatus = document.querySelector("#asset-status");
 const assetStatusText = document.querySelector("#asset-status-text");
@@ -1074,7 +1108,10 @@ const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const mobileLayout = window.matchMedia("(max-width: 620px), (max-width: 1024px) and (max-height: 550px) and (pointer: coarse)");
 const purr = new Purr();
 const images = new Map();
-const view = { width: 0, height: 0, pixelRatio: 1, scale: 1, x: 0, y: 0, mobile: false };
+const view = {
+  width: 0, height: 0, pixelRatio: 1, scale: 1, x: 0, y: 0, mobile: false,
+  catScale: 1, catX: 0, catY: 0,
+};
 
 let cat = readSelection("cat", cats);
 let background = readSelection("background", backgrounds);
@@ -1162,6 +1199,7 @@ function watchSceneAssets() {
     current.tail = imageFor(cat.tail, "low");
     imageFor(hands.open.image);
     imageFor(hands.curled.image, "low");
+    fitCat();
   };
 
   if (ready(body)) {
@@ -1246,6 +1284,11 @@ sizeControl.addEventListener("input", () => {
   spine = tailSpine(geometry, pose);
 });
 
+catScaleControl.addEventListener("input", () => {
+  if (gesture || keyboard || pointerId !== null) stopPetting();
+  fitCat();
+});
+
 assetRetry.addEventListener("click", () => {
   art = loadCat(cat, true);
   watchSceneAssets();
@@ -1271,6 +1314,38 @@ function fitStage() {
   view.x = (view.width - WIDTH * view.scale) / 2;
   view.y = (view.height - HEIGHT * view.scale) / 2;
   if (view.mobile) view.y += view.height * 0.06;
+  fitCat();
+}
+
+function fitCat() {
+  if (!view.width || !view.height) return;
+
+  // Hold the pivot and fit limit steady as the body changes and the tail curls.
+  const full = catGeometry(cat, art, 1);
+  const furMargin = 24;
+  const tailSwing = full.tailLength * 0.78;
+  const left = full.bodyX - furMargin;
+  const right = Math.max(full.bodyX + full.bodyWidth, full.rootX + full.tailLength) + furMargin;
+  const top = Math.min(full.bodyY, full.rootY - tailSwing) - furMargin;
+  const bottom = Math.max(full.bodyY + full.bodyHeight, full.rootY + tailSwing) + furMargin;
+  const pivotX = (left + right) / 2;
+  const pivotY = (top + bottom) / 2;
+  const screenX = view.x + pivotX * view.scale;
+  const screenY = view.y + pivotY * view.scale;
+  const inset = 4;
+  const fittingScale = Math.min(
+    (screenX - inset) / (pivotX - left),
+    (view.width - screenX - inset) / (right - pivotX),
+    (screenY - inset) / (pivotY - top),
+    (view.height - screenY - inset) / (bottom - pivotY),
+  );
+  const max = Math.max(Number(catScaleControl.min),
+    Math.min(maximumCatScale, Math.floor(fittingScale / view.scale * 100)));
+  if (Number(catScaleControl.max) !== max) catScaleControl.max = String(max);
+
+  view.catScale = view.scale * catScaleControl.valueAsNumber / 100;
+  view.catX = screenX - pivotX * view.catScale;
+  view.catY = screenY - pivotY * view.catScale;
 }
 
 new ResizeObserver(fitStage).observe(scene);
@@ -1296,7 +1371,7 @@ function drawHandSprite(ink, config, placement, opacity = 1) {
   const image = imageFor(config.image);
   if (!ready(image) || opacity < 0.01) return;
 
-  const { width, y: handY, bottom } = placement;
+  const { width, x: handX, y: handY, bottom } = placement;
   const height = width * image.naturalHeight / image.naturalWidth;
   const x = -width * config.anchorX;
   const y = -height * config.anchorY;
@@ -1310,7 +1385,7 @@ function drawHandSprite(ink, config, placement, opacity = 1) {
   const extra = Math.max(0, bottomGap);
 
   ink.save();
-  ink.translate(hand.x, handY);
+  ink.translate(handX, handY);
   ink.rotate(hand.tilt);
   ink.globalAlpha = opacity;
 
@@ -1333,14 +1408,16 @@ function drawHand() {
   const width = view.mobile ? 232 : 167;
   const bottom = (view.height - view.y) / view.scale;
   const startY = bottom + width * 0.42;
-  const placement = { width, bottom, y: startY + (hand.y - startY) * entry };
+  const handX = (view.catX + hand.x * view.catScale - view.x) / view.scale;
+  const handY = (view.catY + hand.y * view.catScale - view.y) / view.scale;
+  const placement = { width, bottom, x: handX, y: startY + (handY - startY) * entry };
   const grip = ready(imageFor(hands.curled.image)) ? hand.grip : 0;
   const radius = 64 - grip * 19;
   const shadowX = 23 - grip * 17;
   const shadowY = 35 - grip * 26;
   const shadowScale = width / 167;
   context.save();
-  context.translate(hand.x, placement.y);
+  context.translate(placement.x, placement.y);
   context.rotate(hand.tilt);
   context.scale(shadowScale, shadowScale * (0.68 - grip * 0.19));
   const shadow = context.createRadialGradient(shadowX, shadowY, 7, shadowX, shadowY, radius);
@@ -1646,9 +1723,13 @@ function render(now) {
   if (view.width && view.height) {
     context.setTransform(view.pixelRatio, 0, 0, view.pixelRatio, 0, 0);
     drawBackground();
+    context.save();
+    context.translate(view.catX, view.catY);
+    context.scale(view.catScale, view.catScale);
+    drawCat(context, pose, cat, art, spine, geometry);
+    context.restore();
     context.translate(view.x, view.y);
     context.scale(view.scale, view.scale);
-    drawCat(context, pose, cat, art, spine, geometry);
     drawHand();
   }
 
@@ -1658,35 +1739,40 @@ function render(now) {
 function scenePoint(event) {
   const bounds = scene.getBoundingClientRect();
   return {
-    x: (event.clientX - bounds.left - view.x) / view.scale,
-    y: (event.clientY - bounds.top - view.y) / view.scale,
+    x: (event.clientX - bounds.left - view.catX) / view.catScale,
+    y: (event.clientY - bounds.top - view.catY) / view.catScale,
   };
 }
 
-function pettingZone(x, y) {
+function pettingZone(x, y, catScale = view.catScale ?? view.scale) {
   const zone = hitCat(x, y, pose, cat, art, spine, geometry);
-  const width = geometry.tailWidth;
-  if (zone === "tail" || zone === "head" || !ready(art.body) || !ready(art.tail)
-    || x <= geometry.rootX || (zone === "back" && x <= geometry.rootX + width * 0.14)) return zone;
+  if (zone === "tail" || zone === "head" || !ready(art.body) || !ready(art.tail) || x <= geometry.rootX) return zone;
 
   const nearby = tailSurfacePoint(x, y, spine);
-  const reach = width * (zone === "back" ? 0.36 : 0.55);
-  if (nearby.progress <= 0.14 || nearby.distance > reach) return zone;
+  const onBack = zone === "back";
+  const width = geometry.tailWidth;
+  // Keep the touch allowance in screen pixels as the cat changes size. Use a
+  // tighter corridor over the rump and leave the socket available to the body.
+  const reach = onBack ? Math.min(12 / catScale, width * 0.36) : Math.max(17 / catScale, width * 0.4);
+  if (nearby.progress <= (onBack ? 0.1 : 0.08) || nearby.distance > reach) return zone;
   if (nearby.progress > 0.9 && beyondTailTip(x, y, spine)) return zone;
   return "tail";
 }
 
 function updatePointer(event, pressed = false) {
   const { x, y } = scenePoint(event);
-  let zone = pettingZone(x, y);
+  const catScale = view.catScale ?? view.scale;
+  const tipReach = 26 / catScale;
+  let zone = pettingZone(x, y, catScale);
   const now = performance.now();
   const touching = touchStartedAt !== null;
 
   if (keyboard?.zone === "tail") releaseTail(now);
   keyboard = null;
   if (gesture?.zone === "tail") {
-    const returningToBack = zone === "back" && x <= geometry.rootX + geometry.tailWidth * 0.14;
-    if (!returningToBack && advanceTailStroke(gesture, x, y, now, true)) {
+    const returningToBody = zone === "head" || (zone === "back" && x <= geometry.rootX);
+    const withinReach = zone === "tail" || Math.hypot(x - geometry.rootX, y - geometry.rootY) <= geometry.tailLength + tipReach;
+    if (!returningToBody && withinReach && advanceTailStroke(gesture, x, y, now, true)) {
       target.classList.toggle("is-following", ready(imageFor(hands.open.image)));
       return;
     }
@@ -1701,12 +1787,7 @@ function updatePointer(event, pressed = false) {
     const continuing = distance + 0.5 >= previousDistance;
     const nearTip = zone === "tail" && tailSurfacePoint(x, y, spine).progress > 0.9;
     if (continuing && nearTip) zone = null;
-    else if (zone || distance > geometry.tailWidth * 0.55) passedTail = null;
-  }
-  if (!zone && !touching) {
-    gesture = null;
-    target.classList.remove("is-following");
-    return;
+    else if (zone || distance > tipReach) passedTail = null;
   }
 
   if (zone === "tail") {
@@ -1718,9 +1799,15 @@ function updatePointer(event, pressed = false) {
 
   if (gesture?.zone === "tail-tip") {
     const tip = tailPointAt(spine, 1);
-    if (!zone && (beyondTailTip(x, y, spine) || Math.hypot(x - tip.x, y - tip.y) < geometry.tailWidth * 0.82)) return;
+    if (!zone && Math.hypot(x - tip.x, y - tip.y) < tipReach) return;
     releaseTail(now);
   }
+  if (!zone && (!touching || x >= geometry.rootX)) {
+    gesture = null;
+    target.classList.remove("is-following");
+    return;
+  }
+
   const contact = touching ? closestBodyContact(x, y, geometry, art.body) : null;
   if (contact && pressed) {
     pose.contactX = contact.x;
@@ -1822,7 +1909,8 @@ document.addEventListener("keydown", (event) => {
   if (event.code === "Space" && inScene) {
     event.preventDefault();
     keyboardPet("back");
-  } else if (event.code === "KeyT" && event.target !== sizeControl && (inScene || viewer.contains(event.target))) {
+  } else if (event.code === "KeyT" && event.target !== sizeControl && event.target !== catScaleControl
+    && (inScene || viewer.contains(event.target))) {
     event.preventDefault();
     keyboardPet("tail");
   }
