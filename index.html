@@ -1155,6 +1155,7 @@ const TAIL_RELEASE_PAUSE = 350;
 const TAIL_RECOVERY_MS = 1000;
 const TAIL_PICKUP_PX = 17;
 const TAIL_RELEASE_PX = 28;
+const TAIL_HAND_START = 0.12;
 const TOUCH_ENTRY_MS = 125;
 const TOUCH_TRANSITION_SPEED = 2100;
 const SCENE_TIMEOUT_MS = 12000;
@@ -1771,6 +1772,14 @@ function updateBodyPressure(action, followingTail, touching, moving, motionScale
   pose.back = approach(pose.back, back, back > pose.back ? 25 : 9, seconds);
 }
 
+function restHandOnTail(x, y, pressed = false) {
+  if (pressed) {
+    pose.tailProgress = tailSurfacePoint(x, y, spine, TAIL_HAND_START).progress;
+    touchTailJoined = true;
+  }
+  return { zone: "tail-nearby", x, y, movedAt: -Infinity };
+}
+
 function render(now) {
   animation = 0;
   const seconds = Math.min(0.05, (now - (previousTime || now - 16)) / 1000);
@@ -1779,17 +1788,18 @@ function render(now) {
 
   const motionScale = reducedMotion.matches ? 0.52 : 1;
   if (gesture?.zone === "tail-tip" && tailRecovery && now - tailRecovery.start > 110) {
-    gesture = null;
-    touchTailJoined = false;
+    gesture = restHandOnTail(gesture.x, gesture.y);
   }
   let action = keyboardContact(now) ?? gesture;
   let tailHeld = action?.zone === "tail";
   const touching = touchStartedAt !== null;
   const atTip = action?.zone === "tail-tip";
-  const followingTail = tailHeld || atTip || (touching && touchTailJoined);
+  const tailNearby = action?.zone === "tail-nearby";
+  const followingTail = tailHeld || atTip || tailNearby || (touching && touchTailJoined);
   if (followingTail) {
     const joinedGrip = tailHeld && (!touching || touchTailJoined);
-    const progress = approach(pose.tailProgress, tailHeld ? action.progress : atTip ? 1 : 0, joinedGrip ? 72 : 38, seconds);
+    const nearby = tailNearby ? tailSurfacePoint(action.x, action.y, spine, TAIL_HAND_START).progress : 0;
+    const progress = approach(pose.tailProgress, tailHeld ? action.progress : atTip ? 1 : nearby, joinedGrip ? 72 : 38, seconds);
     const maxStep = TOUCH_TRANSITION_SPEED * seconds / geometry.tailLength;
     pose.tailProgress = touching && !joinedGrip
       ? pose.tailProgress + Math.max(-maxStep, Math.min(maxStep, progress - pose.tailProgress))
@@ -1941,9 +1951,14 @@ function updatePointer(event, pressed = false) {
     const tip = tailPointAt(spine, 1);
     if (!zone && Math.hypot(x - tip.x, y - tip.y) < tipReach) return;
   }
-  if (!zone && (!touching || x >= geometry.rootX)) {
+  if (!zone && !touching) {
     gesture = null;
     target.classList.remove("is-following");
+    return;
+  }
+  if (!zone && x >= geometry.rootX && ready(art.tail)) {
+    gesture = restHandOnTail(x, y, pressed);
+    target.classList.toggle("is-following", ready(imageFor(hands.open.image)));
     return;
   }
 
