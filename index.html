@@ -332,7 +332,7 @@ const hands = {
 
 return { cats, backgrounds, hands };
 })();
-const { catGeometry, closestBodyContact, drawCat, hitCat, tailPointAt, tailSpine, tailSurfacePoint } = (() => {
+const { catGeometry, closestBodyContact, drawCat, hitCat, tailEdgeDistance, tailJointAngles, tailPointAt, tailSpine, tailSurfacePoint } = (() => {
 const bodyMasks = new WeakMap();
 const bodyShadows = new WeakMap();
 const shapedBodies = new WeakMap();
@@ -341,6 +341,7 @@ const shadedTails = new WeakMap();
 const TAIL_SEGMENTS = 24;
 const TAIL_SOCKET_LINKS = 2;
 const TAIL_STEERING_PASSES = 5;
+const TAIL_STEERING_LIMIT = 1.12;
 const BODY_SHAPE_COLUMNS = 24;
 const BODY_COLUMNS = 12;
 const BODY_ROWS = 6;
@@ -422,10 +423,28 @@ function tailSurfacePoint(x, y, spine, start = 0, end = 1) {
     const part = clamp(projection, Math.max(0, lower - index), Math.min(1, upper - index));
     const distance = Math.hypot(x - before.x - dx * part, y - before.y - dy * part);
     if (distance < contact.distance) {
-      contact = { progress: (index + part) / TAIL_SEGMENTS, distance };
+      const widthScale = mix(before.widthScale ?? 1, after.widthScale ?? 1, part);
+      contact = { progress: (index + part) / TAIL_SEGMENTS, distance, widthScale };
     }
   }
   return contact;
+}
+
+function tailEdgeDistance(geometry, contact) {
+  return contact.distance - tailRadius(geometry, contact.progress) * (contact.widthScale ?? 1);
+}
+
+function tailJointAngles(spine) {
+  const angles = [];
+  let previous = 0;
+  for (let index = 0; index < TAIL_SEGMENTS; index += 1) {
+    const before = spine[index];
+    const after = spine[index + 1];
+    const angle = Math.atan2(after.y - before.y, after.x - before.x);
+    previous = angle + 2 * Math.PI * Math.round((previous - angle) / (2 * Math.PI));
+    angles.push(previous);
+  }
+  return angles;
 }
 
 function drawCat(ctx, pose = {}, cat = {}, art = {}, spine, geometry = catGeometry(cat, art)) {
@@ -448,40 +467,33 @@ function hitCat(x, y, pose = {}, cat = {}, art = {}, spine, geometry = catGeomet
   if (!ready(art?.body)) return null;
   const onBody = bodyContains(art.body, geometry, x, y);
 
-  // The tail is layered behind the rump. Give visible fur the same priority here.
   if (onBody) return x <= geometry.headEndX ? 'head' : 'back';
   if (!ready(art.tail)) return null;
 
   const contact = tailSurfacePoint(x, y, spine ?? tailSpine(geometry, pose));
-  return contact.distance <= tailRadius(geometry, contact.progress) + 7 ? 'tail' : null;
+  return tailEdgeDistance(geometry, contact) <= 7 ? 'tail' : null;
 }
 
 function tailSpine(geometry, pose = {}) {
   const { rootX, rootY, tailLength } = geometry;
-  const open = clamp(pose.tailOpen ?? 0);
-  const bend = pose.tailBend ?? 0;
   const grip = pose.tailProgress ?? 0;
-  const flex = pose.tailFlex ?? 0;
   const pressure = clamp(pose.tailPressure ?? 0);
   const length = tailLength / TAIL_SEGMENTS;
   const spine = [{ x: rootX, y: rootY }];
-
-  // Curl comes from the joint angles. Equal link lengths keep the fur bands the
-  // same size and leave the rest of the tail free beyond the hand.
-  for (let index = 0; index < TAIL_SEGMENTS; index += 1) {
-    const progress = (index + 0.5) / TAIL_SEGMENTS;
-    const curl = Math.PI * clamp((progress - 0.31) / 0.69) ** 1.12;
-    const fromRoot = clamp((progress - 0.04) / 0.59);
-    const lifted = bend * fromRoot * (2 - fromRoot);
-    const softTip = 0.27 * clamp((progress - 0.63) / 0.37) ** 2;
-    const local = (progress - grip) / 0.16;
-    const flexWeight = Math.exp(-local * local) * clamp(progress * 8);
-    const angle = mix(curl, lifted + softTip, open) + flex * flexWeight;
-    const previous = spine[index];
-    spine.push({ x: previous.x + Math.cos(angle) * length, y: previous.y + Math.sin(angle) * length });
+  const bounds = pose.tailTarget?.bounds ?? pose.tailBounds;
+  const angles = pose.tailAngles ?? defaultTailAngles(pose);
+  placeTailLinks(spine, length, angles);
+  if ((pose.tailAngles || bounds) && !tailFits(geometry, spine, bounds)) {
+    constrainTail(geometry, spine, defaultTailAngles({}), angles, bounds);
   }
 
-  if (pose.tailTarget) steerTail(spine, pose.tailTarget);
+  if (pose.tailTarget) {
+    const before = tailJointAngles(spine);
+    steerTail(spine, pose.tailTarget);
+    if (!tailFits(geometry, spine, bounds)) {
+      constrainTail(geometry, spine, before, tailJointAngles(spine), bounds);
+    }
+  }
 
   for (let index = 0; index < spine.length; index += 1) {
     const before = spine[Math.max(index - 1, 0)];
@@ -497,6 +509,64 @@ function tailSpine(geometry, pose = {}) {
   return spine;
 }
 
+function defaultTailAngles(pose) {
+  const open = clamp(pose.tailOpen ?? 0);
+  const bend = pose.tailBend ?? 0;
+  const grip = pose.tailProgress ?? 0;
+  const flex = pose.tailFlex ?? 0;
+
+  return Array.from({ length: TAIL_SEGMENTS }, (_, index) => {
+    const progress = (index + 0.5) / TAIL_SEGMENTS;
+    const curl = Math.PI * clamp((progress - 0.31) / 0.69) ** 1.12;
+    const fromRoot = clamp((progress - 0.04) / 0.59);
+    const lifted = bend * fromRoot * (2 - fromRoot);
+    const softTip = 0.27 * clamp((progress - 0.63) / 0.37) ** 2;
+    const local = (progress - grip) / 0.16;
+    const flexWeight = Math.exp(-local * local) * clamp(progress * 8);
+    return mix(curl, lifted + softTip, open) + flex * flexWeight;
+  });
+}
+
+function placeTailLinks(spine, length, angles) {
+  for (let index = 0; index < TAIL_SEGMENTS; index += 1) {
+    const angle = index < TAIL_SOCKET_LINKS ? 0 : angles[index];
+    const previous = spine[index];
+    const next = spine[index + 1] ?? {};
+    next.x = previous.x + Math.cos(angle) * length;
+    next.y = previous.y + Math.sin(angle) * length;
+    spine[index + 1] = next;
+  }
+}
+
+function tailFits(geometry, spine, bounds = {}) {
+  const { left = -Infinity, right = Infinity, top = -Infinity, bottom = Infinity } = bounds;
+  const bodyLimit = geometry.rootX - geometry.tailWidth * 0.12;
+  for (let index = 0; index < spine.length; index += 1) {
+    const { x, y } = spine[index];
+    const progress = index / TAIL_SEGMENTS;
+    const minX = progress >= 0.25 ? Math.max(left, bodyLimit) : left;
+    const radius = tailRadius(geometry, progress);
+    if (x - radius < minX || x + radius > right || y - radius < top || y + radius > bottom) return false;
+  }
+  return true;
+}
+
+function constrainTail(geometry, spine, from, to, bounds) {
+  const length = geometry.tailLength / TAIL_SEGMENTS;
+  const angles = new Array(TAIL_SEGMENTS);
+  let minimum = 0;
+  let maximum = 1;
+  for (let step = 0; step < 7; step += 1) {
+    const amount = (minimum + maximum) / 2;
+    for (let index = 0; index < TAIL_SEGMENTS; index += 1) angles[index] = mix(from[index], to[index], amount);
+    placeTailLinks(spine, length, angles);
+    if (tailFits(geometry, spine, bounds)) minimum = amount;
+    else maximum = amount;
+  }
+  for (let index = 0; index < TAIL_SEGMENTS; index += 1) angles[index] = mix(from[index], to[index], minimum);
+  placeTailLinks(spine, length, angles);
+}
+
 function steerTail(spine, target) {
   const { x, y, progress } = target;
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(progress)) return;
@@ -507,8 +577,6 @@ function steerTail(spine, target) {
   const turns = new Float64Array(TAIL_SEGMENTS);
   let tipTurn = 0;
 
-  // Each hinge rotates the grip and the downstream tail together. This gives
-  // the skinned tail the same link lengths even if the target is out of reach.
   for (let pass = 0; pass < TAIL_STEERING_PASSES; pass += 1) {
     for (let joint = TAIL_SOCKET_LINKS; joint <= lastJoint; joint += 1) {
       if (Math.hypot(x - contact.x, y - contact.y) < 0.75) return;
@@ -518,10 +586,16 @@ function steerTail(spine, target) {
       const goalX = x - pivot.x;
       const goalY = y - pivot.y;
       const turn = Math.atan2(dx * goalY - dy * goalX, dx * goalX + dy * goalY) * 0.55;
-      const limit = joint === TAIL_SOCKET_LINKS ? 0.1 : 0.15;
+      const mobility = clamp((joint - TAIL_SOCKET_LINKS) / 7);
+      const limit = mix(0.14, 0.24, mobility);
+      const before = spine[joint - 1];
+      const after = spine[joint + 1];
+      const currentBend = Math.atan2(after.y - pivot.y, after.x - pivot.x) - Math.atan2(pivot.y - before.y, pivot.x - before.x);
+      const bend = Math.atan2(Math.sin(currentBend), Math.cos(currentBend));
+      const bendLimit = Math.max(Math.abs(bend), mix(0.18, 0.42, mobility));
       const correction = clamp(turn,
-        Math.max(-limit - turns[joint], -0.8 - tipTurn),
-        Math.min(limit - turns[joint], 0.8 - tipTurn));
+        Math.max(-limit - turns[joint], -TAIL_STEERING_LIMIT - tipTurn, -bendLimit - bend),
+        Math.min(limit - turns[joint], TAIL_STEERING_LIMIT - tipTurn, bendLimit - bend));
       if (Math.abs(correction) < 0.001) continue;
 
       turns[joint] += correction;
@@ -586,7 +660,6 @@ function blendTailRoot(image, geometry) {
   if (!ctx?.createRadialGradient) return image;
   ctx.drawImage(image, 0, 0);
 
-  // Feather only the section of the rump covering the tail, leaving the surrounding fur edge intact.
   ctx.globalCompositeOperation = 'destination-out';
   ctx.translate(canvas.width * 0.995, canvas.height * rootV);
   ctx.scale(canvas.width * 0.058, canvas.height * 0.105);
@@ -615,8 +688,6 @@ function fitBodyShape(image, geometry) {
   const ctx = canvas.getContext('2d');
   if (!ctx) return image;
 
-  // Cache the torso reshape before the per-frame petting deformation. The head
-  // and tail root retain their original proportions in this intermediate image.
   const verticalScale = canvas.height / bodyHeight;
   const vertex = (u, v) => ({ x: u * width, y: (bodyYAt(geometry, u, v) - bodyY) * verticalScale });
   let top = vertex(0, 0);
@@ -686,7 +757,6 @@ function shadowFor(image) {
   const ctx = sample.getContext('2d');
   if (!ctx) return null;
 
-  // Offset a shadow from an off-canvas copy to retain only its alpha silhouette.
   const offstage = sample.width + 32;
   ctx.shadowOffsetX = offstage;
   ctx.shadowBlur = 9;
@@ -709,7 +779,6 @@ function drawBodyShadow(ctx, image, g, motion) {
   let shiftY = 0;
   let heightChange = 0;
   if (motion) {
-    // Sample the same compression field and gently reshape the cached shadow.
     const x = clamp(motion.x, g.bodyX, g.bodyX + g.bodyWidth);
     const upperY = g.bodyY + g.bodyHeight * 0.12;
     const lowerY = g.bodyY + g.bodyHeight * 0.88;
@@ -754,7 +823,6 @@ function deformBodyPoint(x, y, g, motion) {
   const softness = mix(0.53, 1, shoulder * shoulder * (3 - 2 * shoulder));
   const amount = motion.pressure * anchored * softness;
 
-  // Neighbouring fur follows the stroke while the closer patch compresses.
   const follow = support * Math.sqrt(support);
   const indentation = support ** 3;
   return {
@@ -839,7 +907,6 @@ function drawTriangle(ctx, image, u0, v0, u1, v1, origin, xPoint, yPoint) {
   ctx.save();
   ctx.beginPath();
   for (const [index, point] of [origin, xPoint, yPoint].entries()) {
-    // Slight overlap covers antialiasing seams between otherwise identical edges.
     const dx = point.x - centerX;
     const dy = point.y - centerY;
     const length = Math.max(1, Math.hypot(dx, dy));
@@ -870,7 +937,6 @@ function maskFor(image) {
       ctx.drawImage(image, 0, 0, width, height);
       mask = { width, height, pixels: ctx.getImageData(0, 0, width, height).data };
     } catch {
-      // A remote image can still be shown even if the host prevents alpha sampling.
     }
   }
   bodyMasks.set(image, mask);
@@ -954,11 +1020,9 @@ function closestBodyContact(x, y, geometry, image) {
 }
 
 
-return { catGeometry, closestBodyContact, drawCat, hitCat, tailPointAt, tailSpine, tailSurfacePoint };
+return { catGeometry, closestBodyContact, drawCat, hitCat, tailEdgeDistance, tailJointAngles, tailPointAt, tailSpine, tailSurfacePoint };
 })();
 const { Purr } = (() => {
-// Whiskers' purr, recorded by Adam Cuerden and edited by X! (public domain).
-// https://commons.wikimedia.org/wiki/File:Whiskers%27_purr_edit.ogg
 const clipUrl = './purr-c6607a8ff9.wav';
 const strokeGapMs = 270;
 const fadeOutMs = 1050;
@@ -988,7 +1052,6 @@ class Purr {
         this.#gain.connect(this.#context.destination);
       }
 
-      // Resume immediately within the gesture, before waiting for the clip.
       const resume = this.#context.state === 'running' ? undefined : this.#context.resume();
       await Promise.all([resume, this.#loadClip()]);
       this.#update();
@@ -1088,7 +1151,10 @@ return { Purr };
 
 const WIDTH = 1200;
 const HEIGHT = 750;
-const TAIL_RELEASE_PAUSE = 185;
+const TAIL_RELEASE_PAUSE = 350;
+const TAIL_RECOVERY_MS = 1000;
+const TAIL_PICKUP_PX = 17;
+const TAIL_RELEASE_PX = 28;
 const TOUCH_ENTRY_MS = 125;
 const TOUCH_TRANSITION_SPEED = 2100;
 const SCENE_TIMEOUT_MS = 12000;
@@ -1127,7 +1193,7 @@ let gesture = null;
 let previousTime = 0;
 let animation = 0;
 let intensity = 0;
-let tailSettlesAt = 0;
+let tailRecovery = null;
 let tailDisplacement = null;
 let passedTail = null;
 let sceneLoadTimeout;
@@ -1226,7 +1292,6 @@ function saveSelection(kind, item) {
   try {
     localStorage.setItem("cat-nap-" + kind, item.id);
   } catch {
-    // Private browsing can restrict storage.
   }
   selectionStatus.textContent = "已选择" + item.name;
 }
@@ -1265,6 +1330,7 @@ mountOptions(document.querySelector("#cats"), cats, cat, (item) => {
   pose.tailBend = 0;
   pose.tailFlex = 0;
   pose.tailPressure = 0;
+  tailRecovery = null;
   tailDisplacement = null;
   spine = tailSpine(geometry, pose);
   saveSelection("cat", cat);
@@ -1281,7 +1347,6 @@ sizeControl.addEventListener("input", () => {
   if (gesture || keyboard || pointerId !== null) stopPetting();
   bodySize = sizeControl.valueAsNumber / 100;
   geometry = catGeometry(cat, art, bodySize);
-  spine = tailSpine(geometry, pose);
 });
 
 catScaleControl.addEventListener("input", () => {
@@ -1320,7 +1385,6 @@ function fitStage() {
 function fitCat() {
   if (!view.width || !view.height) return;
 
-  // Hold the pivot and fit limit steady as the body changes and the tail curls.
   const full = catGeometry(cat, art, 1);
   const furMargin = 24;
   const tailSwing = full.tailLength * 0.78;
@@ -1446,7 +1510,6 @@ function drawHand() {
   ink.setTransform(scale, 0, 0, scale, view.pixelRatio * view.x, view.pixelRatio * view.y);
   ink.globalCompositeOperation = "source-over";
   drawHandSprite(ink, hands.open, placement, 1 - grip);
-  // Blend both textures on their own layer so the overlapping hand stays opaque.
   ink.globalCompositeOperation = "lighter";
   drawHandSprite(ink, hands.curled, placement, grip);
 
@@ -1460,9 +1523,31 @@ function approach(current, goal, rate, seconds) {
   return goal + (current - goal) * Math.exp(-rate * seconds);
 }
 
+function smoothstep(value) {
+  const fraction = Math.max(0, Math.min(1, value));
+  return fraction * fraction * (3 - 2 * fraction);
+}
+
+function tailBounds() {
+  const inset = 4;
+  return {
+    left: (inset - view.catX) / view.catScale,
+    right: (view.width - inset - view.catX) / view.catScale,
+    top: (inset - view.catY) / view.catScale,
+    bottom: (view.height - inset - view.catY) / view.catScale,
+  };
+}
+
+function tailAngleOffset(angle, from) {
+  return Math.atan2(Math.sin(angle - from), Math.cos(angle - from));
+}
+
 function beginTailStroke(x, y, now, pressed, keepProgress = false) {
   const { progress } = tailSurfacePoint(x, y, spine);
   const point = tailPointAt(spine, progress);
+  const startingBend = tailRecovery && tailJointAngles(spine).map((angle, index) =>
+    tailAngleOffset(angle, tailRecovery.rest[index]));
+  tailRecovery = null;
   if (!keepProgress) pose.tailProgress = progress;
   return {
     zone: "tail", x, y, dx: 0, dy: 0, movedAt: pressed ? now : -Infinity,
@@ -1470,6 +1555,17 @@ function beginTailStroke(x, y, now, pressed, keepProgress = false) {
     startProgress: progress, progress, furthestX: x,
     startOpen: pose.tailOpen, startBend: pose.tailBend,
     open: pose.tailOpen, bend: pose.tailBend, flex: 0, slip: false,
+    startingBend, keptBend: 1, lateralSpeed: 0,
+  };
+}
+
+function tailStrokePose(stroke, settings) {
+  if (!stroke.startingBend || stroke.keptBend <= 0) return settings;
+  const angles = tailJointAngles(tailSpine(geometry, settings));
+  return {
+    ...settings,
+    tailAngles: angles.map((angle, index) => angle + stroke.startingBend[index] * stroke.keptBend),
+    tailBounds: tailBounds(),
   };
 }
 
@@ -1494,15 +1590,17 @@ function advanceTailStroke(stroke, x, y, now, followFinger = false) {
   const fingerX = x - stroke.offsetX * offset;
   const fingerY = y - stroke.offsetY * offset;
   const { angle } = tailPointAt(spine, stroke.progress);
+  const across = dy * Math.cos(angle) - dx * Math.sin(angle);
+  const along = dx * Math.cos(angle) + dy * Math.sin(angle);
+  const acrossTail = Math.abs(across) > Math.abs(along) * 0.72;
+  if (stroke.startingBend) stroke.keptBend = Math.min(stroke.keptBend, 1 - smoothstep(travel / (length * 0.45)));
 
-  // Opening records the outward part of this stroke. Returning along the same
-  // fur only moves the grip; it does not coil the tail back underneath the user.
   if (x > stroke.furthestX) {
     stroke.furthestX = x;
     const pull = Math.max(0, x - stroke.startX - length * 0.014);
     const span = length * (0.17 + (1 - stroke.startProgress) * 0.19);
     const progress = Math.min(1, pull / span);
-    const opening = progress * progress * (3 - 2 * progress);
+    const opening = smoothstep(progress);
     stroke.open = stroke.startOpen + (1 - stroke.startOpen) * opening;
     const yaw = Math.atan2(y - stroke.startY, Math.max(length * 0.17, pull));
     const bend = Math.max(-0.56, Math.min(0.54, yaw));
@@ -1514,19 +1612,19 @@ function advanceTailStroke(stroke, x, y, now, followFinger = false) {
   const start = Math.max(0, stroke.progress - search);
   const end = Math.min(1, stroke.progress + search);
   const drawn = tailSurfacePoint(fingerX, fingerY, spine, start, end);
-  const goalSpine = tailSpine(geometry, { tailOpen: stroke.open, tailBend: stroke.bend });
+  const goalSpine = tailSpine(geometry, tailStrokePose(stroke, { tailOpen: stroke.open, tailBend: stroke.bend }));
   const ahead = tailSurfacePoint(fingerX, fingerY, goalSpine, start, end);
   const onDrawnTail = drawn.distance <= width * 0.47;
   const contact = onDrawnTail ? drawn : ahead;
   const nearTip = Math.max(stroke.progress, drawn.progress, ahead.progress) > 0.94;
   stroke.slip = nearTip && beyondTailTip(fingerX, fingerY, goalSpine);
-  const reach = width * (followFinger ? 0.9 : 0.57);
-  if (!stroke.slip && Math.min(drawn.distance, contact.distance) > reach) return false;
+  const edgeGap = Math.min(tailEdgeDistance(geometry, drawn), tailEdgeDistance(geometry, ahead));
+  const outsideReach = followFinger && touchStartedAt !== null
+    ? edgeGap * view.catScale > TAIL_RELEASE_PX
+    : Math.min(drawn.distance, contact.distance) > width * (followFinger ? 0.9 : 0.57);
+  if (!stroke.slip && outsideReach) return false;
 
-  const across = dy * Math.cos(angle) - dx * Math.sin(angle);
-  const along = dx * Math.cos(angle) + dy * Math.sin(angle);
-  const acrossTail = Math.abs(across) > Math.abs(along) * 0.82;
-  const steering = followFinger && !stroke.slip && (stroke.target || (acrossTail && drawn.distance > 7));
+  const steering = followFinger && !stroke.slip && (stroke.target || (acrossTail && drawn.distance > 4));
   stroke.target = steering ? { x: fingerX, y: fingerY } : null;
   stroke.flex = steering ? 0 : Math.max(-0.14, Math.min(0.14, across / 42));
   if (stroke.slip) stroke.progress = 1;
@@ -1535,24 +1633,27 @@ function advanceTailStroke(stroke, x, y, now, followFinger = false) {
   stroke.y = y;
   stroke.dx = dx;
   stroke.dy = dy;
+  const delta = now - stroke.movedAt;
+  stroke.lateralSpeed = delta < 100 ? across * view.catScale * 1000 / Math.max(8, delta) : 0;
   stroke.movedAt = now;
   return true;
 }
 
-function drawTailSpine(action, seconds) {
-  const base = tailSpine(geometry, pose);
-  const target = action?.target;
+function drawTailSpine(action, seconds, now) {
+  if (!action) return recoverTail(now);
+
+  const settings = tailStrokePose(action, pose);
+  const base = tailSpine(geometry, settings);
+  const target = action.target;
   if (!target && !tailDisplacement) return base;
 
-  // The pointing position steers the curve without changing the outward-stroke
-  // progress. Ease the offset back to the base curve when contact ends.
-  const progress = target ? pose.tailProgress : tailDisplacement.progress;
+  const progress = pose.tailProgress;
   const point = tailPointAt(base, progress);
   const goal = target ? tailPointAt(base, action.progress) : point;
   const dx = target ? target.x - goal.x : 0;
   const dy = target ? target.y - goal.y : 0;
-  const limit = Math.max(1, Math.hypot(dx, dy) / (geometry.tailWidth * 0.85));
-  const rate = target ? 36 : 10;
+  const limit = Math.max(1, Math.hypot(dx, dy) / (geometry.tailWidth * 1.5));
+  const rate = target ? 44 : 14;
   const x = approach(tailDisplacement?.x ?? 0, dx / limit, rate, seconds);
   const y = approach(tailDisplacement?.y ?? 0, dy / limit, rate, seconds);
   if (!target && Math.hypot(x, y) < 0.25) {
@@ -1560,12 +1661,57 @@ function drawTailSpine(action, seconds) {
     return base;
   }
 
-  tailDisplacement = { x, y, progress };
-  return tailSpine(geometry, { ...pose, tailTarget: { x: point.x + x, y: point.y + y, progress } });
+  tailDisplacement = { x, y };
+  return tailSpine(geometry, {
+    ...settings,
+    tailTarget: { x: point.x + x, y: point.y + y, progress, bounds: tailBounds() },
+  });
 }
 
-function releaseTail(now) {
-  tailSettlesAt = now + (reducedMotion.matches ? 60 : TAIL_RELEASE_PAUSE);
+function releaseTail(now, stroke = gesture?.zone === "tail" ? gesture : keyboard?.stroke) {
+  if (tailRecovery) return;
+
+  const reduced = reducedMotion.matches;
+  const lateralSpeed = stroke && now - stroke.movedAt < 120 ? stroke.lateralSpeed : 0;
+  tailRecovery = {
+    angles: tailJointAngles(spine),
+    rest: tailJointAngles(tailSpine(geometry)),
+    start: now + (reduced ? 180 : TAIL_RELEASE_PAUSE),
+    duration: reduced ? 650 : TAIL_RECOVERY_MS,
+    sway: reduced ? 0 : 0.085 * Math.sign(lateralSpeed) * smoothstep((Math.abs(lateralSpeed) - 90) / 400),
+    pressure: pose.tailPressure,
+    progress: pose.tailProgress,
+  };
+  pose.tailOpen = 0;
+  pose.tailBend = 0;
+  pose.tailFlex = 0;
+  tailDisplacement = null;
+}
+
+function recoverTail(now) {
+  if (!tailRecovery) return tailSpine(geometry, pose);
+
+  const { angles, rest, start, duration, sway, pressure, progress } = tailRecovery;
+  const elapsed = (now - start) / duration;
+  if (elapsed >= 1) {
+    tailRecovery = null;
+    return tailSpine(geometry, pose);
+  }
+
+  const flick = elapsed > 0.58 ? Math.sin(Math.PI * smoothstep((elapsed - 0.58) / 0.42)) * sway : 0;
+  const recoveringAngles = angles.map((angle, index) => {
+    const position = index / (angles.length - 1);
+    const delay = 0.16 * position ** 1.5;
+    const blend = smoothstep((elapsed - delay) / (0.84));
+    return angle + tailAngleOffset(rest[index], angle) * blend + flick * position ** 3;
+  });
+  return tailSpine(geometry, {
+    ...pose,
+    tailAngles: recoveringAngles,
+    tailBounds: tailBounds(),
+    tailPressure: pressure * (1 - smoothstep(elapsed)),
+    tailProgress: progress,
+  });
 }
 
 function keyboardContact(now) {
@@ -1632,6 +1778,10 @@ function render(now) {
   geometry = catGeometry(cat, art, bodySize);
 
   const motionScale = reducedMotion.matches ? 0.52 : 1;
+  if (gesture?.zone === "tail-tip" && tailRecovery && now - tailRecovery.start > 110) {
+    gesture = null;
+    touchTailJoined = false;
+  }
   let action = keyboardContact(now) ?? gesture;
   let tailHeld = action?.zone === "tail";
   const touching = touchStartedAt !== null;
@@ -1648,14 +1798,11 @@ function render(now) {
   if (tailHeld) {
     pose.tailOpen = approach(pose.tailOpen, action.open, 19, seconds);
     pose.tailBend = approach(pose.tailBend, action.bend, 14, seconds);
-  } else if (!atTip && now >= tailSettlesAt) {
-    pose.tailOpen = approach(pose.tailOpen, 0, 4.6, seconds);
-    pose.tailBend = approach(pose.tailBend, 0, 5.2, seconds);
   }
   const activeFlex = tailHeld && now - action.movedAt < 120 ? action.flex : 0;
   pose.tailFlex = approach(pose.tailFlex, activeFlex * motionScale, 12, seconds);
   pose.tailPressure = approach(pose.tailPressure, tailHeld ? motionScale : 0, 17, seconds);
-  spine = drawTailSpine(tailHeld ? action : null, seconds);
+  spine = drawTailSpine(tailHeld ? action : null, seconds, now);
 
   let handTilt = 0;
   if (followingTail) {
@@ -1671,10 +1818,8 @@ function render(now) {
     if (!tailHeld && !atTip && pose.tailProgress < 0.025) touchTailJoined = false;
     handTilt = Math.sin(contact.angle) * 0.25;
 
-    // The artwork can still be catching up with a quick swipe. Let the grip
-    // reach the drawn tip before releasing, even if the pointer stops moving.
     if (tailHeld && action.slip && pose.tailProgress > 0.978 && beyondTailTip(action.x, action.y, spine)) {
-      releaseTail(now);
+      releaseTail(now, action);
       passedTail = keyboard ? null : { x: action.x, y: action.y };
       gesture = touching ? { ...action, zone: "tail-tip", movedAt: -Infinity } : null;
       keyboard = null;
@@ -1744,28 +1889,23 @@ function scenePoint(event) {
   };
 }
 
-function pettingZone(x, y, catScale = view.catScale ?? view.scale) {
+function pettingZone(x, y, touching) {
   const zone = hitCat(x, y, pose, cat, art, spine, geometry);
   if (zone === "tail" || zone === "head" || !ready(art.body) || !ready(art.tail) || x <= geometry.rootX) return zone;
 
   const nearby = tailSurfacePoint(x, y, spine);
   const onBack = zone === "back";
-  const width = geometry.tailWidth;
-  // Keep the touch allowance in screen pixels as the cat changes size. Use a
-  // tighter corridor over the rump and leave the socket available to the body.
-  const reach = onBack ? Math.min(12 / catScale, width * 0.36) : Math.max(17 / catScale, width * 0.4);
-  if (nearby.progress <= (onBack ? 0.1 : 0.08) || nearby.distance > reach) return zone;
-  if (nearby.progress > 0.9 && beyondTailTip(x, y, spine)) return zone;
+  const reach = onBack ? (touching ? 10 : 2) : (touching ? TAIL_PICKUP_PX : 7);
+  if (nearby.progress <= (onBack ? 0.10 : 0.08) || tailEdgeDistance(geometry, nearby) * view.catScale > reach) return zone;
   return "tail";
 }
 
 function updatePointer(event, pressed = false) {
   const { x, y } = scenePoint(event);
-  const catScale = view.catScale ?? view.scale;
-  const tipReach = 26 / catScale;
-  let zone = pettingZone(x, y, catScale);
-  const now = performance.now();
   const touching = touchStartedAt !== null;
+  const tipReach = (touching ? TAIL_RELEASE_PX : 26) / view.catScale;
+  let zone = pettingZone(x, y, touching);
+  const now = performance.now();
 
   if (keyboard?.zone === "tail") releaseTail(now);
   keyboard = null;
@@ -1776,7 +1916,7 @@ function updatePointer(event, pressed = false) {
       target.classList.toggle("is-following", ready(imageFor(hands.open.image)));
       return;
     }
-    releaseTail(now);
+    releaseTail(now, gesture);
     gesture = null;
   }
 
@@ -1800,7 +1940,6 @@ function updatePointer(event, pressed = false) {
   if (gesture?.zone === "tail-tip") {
     const tip = tailPointAt(spine, 1);
     if (!zone && Math.hypot(x - tip.x, y - tip.y) < tipReach) return;
-    releaseTail(now);
   }
   if (!zone && (!touching || x >= geometry.rootX)) {
     gesture = null;
@@ -1832,7 +1971,7 @@ function stopPetting() {
     target.releasePointerCapture(captured);
   }
 
-  if (gesture?.zone === "tail" || gesture?.zone === "tail-tip" || keyboard?.zone === "tail") {
+  if (gesture?.zone === "tail" || keyboard?.zone === "tail") {
     releaseTail(performance.now());
   }
   touchStartedAt = null;
